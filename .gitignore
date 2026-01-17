@@ -1,0 +1,62 @@
+# Environment variables
+.env
+
+# Secrets and credentials
+secrets/
+*.json
+!package*.json
+service-account*.json
+*-key.json
+.git-replacements.txt
+
+# Logs
+logs/
+*.log
+
+# Build script (as requested)
+build_and_push.sh
+deploy-*.sh
+gcp_spend.sh
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+data/
+config/
+database/
+
+
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# VS Code
+.vscode/
+
+# Markdown files (except README.md, DEPLOYMENT.md, AGENTS.md, and prompts/)
+*.md
+!README.md
+!DEPLOYMENT.md
+!AGENTS.md
+!prompts/*.md

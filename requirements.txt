@@ -1,0 +1,9 @@
+google-genai==1.52.0
+python-telegram-bot[job-queue]==22.1
+python-dotenv==1.0.1
+pillow==10.4.0
+fastapi==0.110.0
+uvicorn==0.22.0
+requests==2.32.3
+httpx==0.28.1
+tenacity==8.2.3

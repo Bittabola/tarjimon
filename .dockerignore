@@ -1,0 +1,26 @@
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.DS_Store
+.env
+daily_token_usage.json.backup
+*.log
+.vscode/
+.idea/
+config/
+data/
+logs/
+deploy-*.sh
+database/
+
+# Secrets and credentials
+secrets/
+*.json
+!package*.json
+service-account*.json
+*-key.json
+
+# Environment and cache
