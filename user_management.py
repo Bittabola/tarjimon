@@ -20,18 +20,16 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime as dt, timezone
-from typing import Dict, List, Optional, Tuple
-
 import strings as S
 from config import (
     logger,
-    DAILY_USER_TOKEN_LIMIT,
-    REQUEST_RATE_LIMIT,
-    MAX_TEXT_LENGTH,
-    MAX_IMAGE_SIZE_MB,
     MONTHLY_TOKEN_LIMITS,
-    SESSION_TIMEOUT_SECONDS,
-    MAX_INACTIVE_SESSIONS,
+)
+from constants import (
+    RATE_LIMITS,
+    TEXT_LIMITS,
+    IMAGE_LIMITS,
+    SESSION_CONSTANTS,
 )
 from database import (
     DatabaseManager,
@@ -149,7 +147,7 @@ class TokenBudgetManager:
 
     def check_monthly_budget(
         self, service: str, tokens_needed: int
-    ) -> Tuple[bool, Optional[str]]:
+    ) -> tuple[bool, str | None]:
         """Check if token request fits within monthly budget."""
         current_usage = self.get_monthly_usage(service)
         total_usage = self.get_monthly_usage()
@@ -204,12 +202,12 @@ class UserManager:
     """Manages user sessions and token-based rate limiting with database persistence."""
 
     def __init__(self):
-        self.sessions: Dict[int, UserSession] = {}
+        self.sessions: dict[int, UserSession] = {}
         self.rate_limits = {
-            "requests_per_minute": REQUEST_RATE_LIMIT,
-            "daily_tokens_per_user": DAILY_USER_TOKEN_LIMIT,  # 20K tokens per user per day
-            "max_text_length": MAX_TEXT_LENGTH,
-            "max_image_size_mb": MAX_IMAGE_SIZE_MB,
+            "requests_per_minute": RATE_LIMITS.REQUESTS_PER_MINUTE,
+            "daily_tokens_per_user": RATE_LIMITS.DAILY_TOKENS_PER_USER,
+            "max_text_length": TEXT_LIMITS.MAX_TEXT_LENGTH,
+            "max_image_size_mb": IMAGE_LIMITS.MAX_IMAGE_SIZE_MB,
         }
         self.budget_manager = TokenBudgetManager()
         self.db_manager = DatabaseManager()
@@ -242,7 +240,7 @@ class UserManager:
         except Exception as e:
             logger.error(f"Error persisting session for user {session.user_id}: {e}")
 
-    def _load_session_from_db(self, user_id: int) -> Optional[UserSession]:
+    def _load_session_from_db(self, user_id: int) -> UserSession | None:
         """Load a session from the database if it exists."""
         try:
             data = load_user_session(user_id)
@@ -254,7 +252,7 @@ class UserManager:
             daily_reset_time = dt.fromisoformat(data["daily_reset_time"]).timestamp()
 
             # Parse request timestamps from JSON
-            request_timestamps_list: List[float] = []
+            request_timestamps_list: list[float] = []
             if data.get("request_timestamps"):
                 try:
                     request_timestamps_list = json.loads(data["request_timestamps"])
@@ -290,7 +288,10 @@ class UserManager:
 
             if db_session:
                 # Check if the loaded session is still valid
-                if current_time - db_session.last_activity <= SESSION_TIMEOUT_SECONDS:
+                if (
+                    current_time - db_session.last_activity
+                    <= SESSION_CONSTANTS.TIMEOUT_SECONDS
+                ):
                     self.sessions[user_id] = db_session
                     logger.debug(f"Restored session for user {user_id} from database")
                 else:
@@ -370,7 +371,7 @@ class UserManager:
 
     def check_token_limits(
         self, user_id: int, service: str, estimated_tokens: int
-    ) -> Tuple[bool, Optional[str]]:
+    ) -> tuple[bool, str | None]:
         """Check if user can use the estimated tokens."""
         session = self.get_or_create_session(user_id)
 
@@ -398,7 +399,7 @@ class UserManager:
 
         return True, None
 
-    def check_rate_limit(self, user_id: int) -> Tuple[bool, Optional[str]]:
+    def check_rate_limit(self, user_id: int) -> tuple[bool, str | None]:
         """Check if user has exceeded request rate limits."""
         session = self.get_or_create_session(user_id)
         current_time = time.time()
@@ -421,7 +422,7 @@ class UserManager:
 
         return True, None
 
-    def check_text_length(self, text: str) -> Tuple[bool, Optional[str]]:
+    def check_text_length(self, text: str) -> tuple[bool, str | None]:
         """Check if text length is within limits."""
         if len(text) > self.rate_limits["max_text_length"]:
             error_msg = S.TEXT_TOO_LONG.format(
@@ -460,17 +461,17 @@ class UserManager:
         inactive_user_ids = []
 
         for user_id, session in self.sessions.items():
-            if current_time - session.last_activity > SESSION_TIMEOUT_SECONDS:
+            if current_time - session.last_activity > SESSION_CONSTANTS.TIMEOUT_SECONDS:
                 inactive_user_ids.append(user_id)
 
         # If we have too many sessions, also remove oldest ones
-        if len(self.sessions) > MAX_INACTIVE_SESSIONS:
+        if len(self.sessions) > SESSION_CONSTANTS.MAX_INACTIVE_SESSIONS:
             # Sort by last activity and get excess sessions
             sorted_sessions = sorted(
                 self.sessions.items(),
                 key=lambda x: x[1].last_activity,
             )
-            excess_count = len(self.sessions) - MAX_INACTIVE_SESSIONS
+            excess_count = len(self.sessions) - SESSION_CONSTANTS.MAX_INACTIVE_SESSIONS
             for user_id, _ in sorted_sessions[:excess_count]:
                 if user_id not in inactive_user_ids:
                     inactive_user_ids.append(user_id)
@@ -481,7 +482,7 @@ class UserManager:
             delete_user_session(user_id)
 
         # Also cleanup old sessions from database that aren't in memory
-        db_cleaned = cleanup_old_sessions(SESSION_TIMEOUT_SECONDS)
+        db_cleaned = cleanup_old_sessions(SESSION_CONSTANTS.TIMEOUT_SECONDS)
 
         total_cleaned = len(inactive_user_ids) + db_cleaned
 
@@ -501,6 +502,5 @@ class UserManager:
         logger.info("All sessions persisted successfully")
 
 
-# Global instances
+# Global instance
 user_manager = UserManager()
-budget_manager = TokenBudgetManager()

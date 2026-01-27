@@ -11,13 +11,11 @@ This package contains modular handlers split by functionality:
 
 from __future__ import annotations
 
+from utils import YOUTUBE_URL_PATTERN
+
 # Re-export common utilities
 from .common import (
-    YOUTUBE_URL_PATTERN,
     get_gemini_client,
-    escape_html,
-    extract_youtube_video_id,
-    extract_youtube_url,
     ensure_free_user_sub,
     get_stats_button,
     log_error_with_context,
@@ -56,18 +54,10 @@ from .feedback import (
     handle_feedback_message,
 )
 
-# Backward compatibility aliases
-_escape_html = escape_html
-_get_stats_button = get_stats_button
-_ensure_free_user_subscription = ensure_free_user_sub
-
 __all__ = [
     # Common utilities
     "YOUTUBE_URL_PATTERN",
     "get_gemini_client",
-    "escape_html",
-    "extract_youtube_video_id",
-    "extract_youtube_url",
     "ensure_free_user_sub",
     "get_stats_button",
     "log_error_with_context",
@@ -92,8 +82,4 @@ __all__ = [
     "is_user_pending_feedback",
     "clear_pending_feedback",
     "handle_feedback_message",
-    # Backward compatibility
-    "_escape_html",
-    "_get_stats_button",
-    "_ensure_free_user_subscription",
 ]

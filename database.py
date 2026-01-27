@@ -9,9 +9,8 @@ from config import (
     DATABASE_FILE,
     TARJIMON_LOG_PATH,
     logger,
-    GEMINI_INPUT_PRICE_PER_M,
-    GEMINI_OUTPUT_PRICE_PER_M,
 )
+from constants import PRICING_CONSTANTS
 
 
 class DatabaseManager:
@@ -64,7 +63,7 @@ class DatabaseManager:
     def _log_error_to_file(self, error_msg):
         """Fallback logging if database operations fail"""
         try:
-            os.makedirs(os.path.dirname(TARJIMON_LOG_PATH), exist_ok=True)
+            os.makedirs(TARJIMON_LOG_PATH, exist_ok=True)
             with open(
                 os.path.join(TARJIMON_LOG_PATH, "db_errors.log"), "a", encoding="utf-8"
             ) as f:
@@ -315,9 +314,11 @@ def log_token_usage_to_db(
     # Calculate cost in USD
     cost_usd = 0.0
     if input_tokens > 0 or output_tokens > 0:
-        cost_usd = (input_tokens / 1_000_000) * GEMINI_INPUT_PRICE_PER_M + (
+        cost_usd = (
+            input_tokens / 1_000_000
+        ) * PRICING_CONSTANTS.GEMINI_INPUT_PRICE_PER_M + (
             output_tokens / 1_000_000
-        ) * GEMINI_OUTPUT_PRICE_PER_M
+        ) * PRICING_CONSTANTS.GEMINI_OUTPUT_PRICE_PER_M
 
     db_manager = DatabaseManager()
     try:
@@ -376,7 +377,7 @@ def _fallback_log_token_usage(
 ):
     """Fallback logging for token usage when database fails"""
     try:
-        os.makedirs(os.path.dirname(TARJIMON_LOG_PATH), exist_ok=True)
+        os.makedirs(TARJIMON_LOG_PATH, exist_ok=True)
         with open(
             os.path.join(TARJIMON_LOG_PATH, "token_usage_fallback.log"),
             "a",

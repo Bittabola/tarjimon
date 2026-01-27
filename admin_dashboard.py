@@ -9,14 +9,12 @@ from fastapi.responses import HTMLResponse
 from config import (
     ADMIN_USERNAME,
     ADMIN_PASSWORD,
-    GEMINI_INPUT_PRICE_PER_M,
-    GEMINI_OUTPUT_PRICE_PER_M,
     NET_REVENUE_PER_STAR,
-    STARS_TO_USD,
     REVENUE_PER_VIDEO_MINUTE,
     REVENUE_PER_TRANSLATION,
     logger,
 )
+from constants import PRICING_CONSTANTS
 from database import DatabaseManager
 
 # Security
@@ -179,7 +177,7 @@ def get_overview_stats(days: int = 30) -> dict:
             row = cursor.fetchone()
             if row and row[0]:
                 stats["total_revenue_stars"] = row[0]
-                stats["total_revenue_usd"] = row[0] * STARS_TO_USD
+                stats["total_revenue_usd"] = row[0] * PRICING_CONSTANTS.STARS_TO_USD
                 stats["net_revenue_usd"] = row[0] * NET_REVENUE_PER_STAR
 
             # Error count
@@ -722,7 +720,7 @@ async def dashboard_overview(
     </div>
     
     <p class="text-muted">
-        Pricing: Input ${GEMINI_INPUT_PRICE_PER_M}/M tokens, Output ${GEMINI_OUTPUT_PRICE_PER_M}/M tokens<br>
+        Pricing: Input ${PRICING_CONSTANTS.GEMINI_INPUT_PRICE_PER_M}/M tokens, Output ${PRICING_CONSTANTS.GEMINI_OUTPUT_PRICE_PER_M}/M tokens<br>
         Premium P/L = Net Revenue - Premium API Cost | Overall P/L = Net Revenue - Total API Cost
     </p>
     """

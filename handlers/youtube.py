@@ -15,18 +15,16 @@ import httpx
 from config import (
     logger,
     GEMINI_MODEL_NAME,
-    YOUTUBE_MAX_OUTPUT_TOKENS,
-    YOUTUBE_FOLLOWUP_MAX_TOKENS,
-    YOUTUBE_TEMPERATURE,
-    YOUTUBE_MAX_DURATION_MINUTES,
-    YOUTUBE_NO_TRANSCRIPT_MULTIPLIER,
-    YOUTUBE_CACHE_TTL_SECONDS,
-    QUESTION_BUTTON_MAX_LENGTH,
-    FREE_YOUTUBE_MINUTES_LIMIT,
     SUBSCRIPTION_PLAN,
     SUPADATA_API_KEY,
     get_days_remaining,
     PROMPTS,
+)
+from constants import (
+    RETRY_CONSTANTS,
+    API_TIMEOUTS,
+    YOUTUBE_LIMITS,
+    SUBSCRIPTION_LIMITS,
 )
 from database import (
     log_token_usage_to_db,
@@ -37,23 +35,11 @@ from database import (
 )
 from user_management import user_manager
 import strings as S
-from errors import (
-    YOUTUBE_ERRORS,
-    GENERAL_ERRORS,
-    FORMATTING_LABELS,
-)
-from constants import (
-    RETRY_CONSTANTS,
-    API_TIMEOUTS,
-)
-from utils import retry_async
+from utils import safe_html, validate_youtube_url, extract_youtube_url, retry_async
 from google.genai import types
 
 from .common import (
     get_gemini_client,
-    escape_html,
-    extract_youtube_video_id,
-    extract_youtube_url,
     log_error_with_context,
     ensure_free_user_sub,
     extract_gemini_response_text,
@@ -77,7 +63,7 @@ def _is_youtube_request_duplicate(user_id: int, video_id: str) -> bool:
         expired_keys = [
             k
             for k, v in _youtube_processing_cache.items()
-            if now - v > YOUTUBE_CACHE_TTL_SECONDS
+            if now - v > YOUTUBE_LIMITS.CACHE_TTL_SECONDS
         ]
         for k in expired_keys:
             del _youtube_processing_cache[k]
@@ -115,7 +101,7 @@ def cleanup_youtube_cache() -> int:
         expired_keys = [
             k
             for k, v in _youtube_processing_cache.items()
-            if now - v > YOUTUBE_CACHE_TTL_SECONDS
+            if now - v > YOUTUBE_LIMITS.CACHE_TTL_SECONDS
         ]
         for k in expired_keys:
             del _youtube_processing_cache[k]
@@ -163,7 +149,7 @@ async def _check_youtube_limits(
     cost_explanation = ""
     if not has_transcript:
         cost_explanation = S.NO_TRANSCRIPT_COST_NOTE.format(
-            multiplier=YOUTUBE_NO_TRANSCRIPT_MULTIPLIER
+            multiplier=YOUTUBE_LIMITS.NO_TRANSCRIPT_MULTIPLIER
         )
 
     if is_premium:
@@ -211,7 +197,7 @@ async def _check_youtube_limits(
             youtube_minutes_remaining = subscription.get("youtube_minutes_remaining", 0)
         else:
             # New free user - give them the free limit
-            youtube_minutes_remaining = FREE_YOUTUBE_MINUTES_LIMIT
+            youtube_minutes_remaining = SUBSCRIPTION_LIMITS.FREE_YOUTUBE_MINUTES
 
         if youtube_minutes_remaining < billable_minutes:
             _clear_youtube_cache(user_id, video_id)
@@ -235,7 +221,7 @@ async def _check_youtube_limits(
                     cost_note=cost_explanation,
                     remaining=youtube_minutes_remaining,
                     days_left=days_remaining,
-                    free_limit=FREE_YOUTUBE_MINUTES_LIMIT,
+                    free_limit=SUBSCRIPTION_LIMITS.FREE_YOUTUBE_MINUTES,
                     stars=plan["stars"],
                     youtube_limit=plan["youtube_minutes_limit"],
                     translation_limit=plan["translation_limit"],
@@ -428,29 +414,25 @@ def _format_youtube_output(response: str) -> tuple[str, list[str]]:
 
         # Add title section
         if title:
-            output_parts.append(f"<b>{escape_html(title)}</b>")
+            output_parts.append(f"<b>{safe_html(title)}</b>")
 
         # Add summary section
         if summary:
-            output_parts.append(
-                f"\n{FORMATTING_LABELS.SUMMARY_SECTION}{escape_html(summary)}"
-            )
+            output_parts.append(f"\n{S.LABEL_SUMMARY_SECTION}{safe_html(summary)}")
 
         # Add key points section
         if points:
-            output_parts.append(
-                f"\n{FORMATTING_LABELS.KEY_POINTS_SECTION}{escape_html(points)}"
-            )
+            output_parts.append(f"\n{S.LABEL_KEY_POINTS}{safe_html(points)}")
 
         if output_parts:
             return "\n".join(output_parts), questions
 
         # Fallback if parsing fails
-        return FORMATTING_LABELS.VIDEO_SUMMARY + escape_html(response), []
+        return S.LABEL_VIDEO_SUMMARY + safe_html(response), []
 
     except Exception as e:
         logger.error(f"Failed to format YouTube output: {e}")
-        return FORMATTING_LABELS.VIDEO_SUMMARY + escape_html(response), []
+        return S.LABEL_VIDEO_SUMMARY + safe_html(response), []
 
 
 async def _perform_youtube_summarization(
@@ -469,7 +451,7 @@ async def _perform_youtube_summarization(
     Returns:
         Tuple of (summary_text, total_token_count, input_tokens, output_tokens, transcript_text or None)
     """
-    video_id = extract_youtube_video_id(youtube_url)
+    video_id = validate_youtube_url(youtube_url)
     source_method = "video"
 
     # Use provided transcript or try to fetch it
@@ -506,8 +488,8 @@ async def _perform_youtube_summarization(
     try:
         # Configure generation
         generate_config = types.GenerateContentConfig(
-            temperature=YOUTUBE_TEMPERATURE,
-            max_output_tokens=YOUTUBE_MAX_OUTPUT_TOKENS,
+            temperature=YOUTUBE_LIMITS.TEMPERATURE,
+            max_output_tokens=YOUTUBE_LIMITS.MAX_OUTPUT_TOKENS,
         )
 
         # Use asyncio.to_thread for async execution
@@ -590,7 +572,7 @@ async def _perform_youtube_summarization(
         error_str = str(e).lower()
         if "not found" in error_str or "unavailable" in error_str:
             return (
-                YOUTUBE_ERRORS.VIDEO_NOT_FOUND,
+                S.YOUTUBE_VIDEO_NOT_FOUND,
                 0,
                 0,
                 0,
@@ -598,23 +580,23 @@ async def _perform_youtube_summarization(
             )
         elif "private" in error_str:
             return (
-                YOUTUBE_ERRORS.PRIVATE_VIDEO,
+                S.YOUTUBE_PRIVATE_VIDEO,
                 0,
                 0,
                 0,
                 None,
             )
         elif "age" in error_str or "restricted" in error_str:
-            return YOUTUBE_ERRORS.AGE_RESTRICTED, 0, 0, 0, None
+            return S.YOUTUBE_AGE_RESTRICTED, 0, 0, 0, None
         elif "token" in error_str or "1048576" in error_str or "exceeds" in error_str:
             return (
-                YOUTUBE_ERRORS.VIDEO_TOO_LONG.format(max_minutes=60),
+                S.YOUTUBE_VIDEO_TOO_LONG.format(max_minutes=60),
                 0,
                 0,
                 0,
                 None,
             )
-        return YOUTUBE_ERRORS.SUMMARY_ERROR, 0, 0, 0, None
+        return S.YOUTUBE_SUMMARY_ERROR, 0, 0, 0, None
 
 
 async def _perform_youtube_followup(
@@ -638,7 +620,7 @@ async def _perform_youtube_followup(
     Returns:
         Tuple of (answer_text, total_token_count, input_tokens, output_tokens)
     """
-    video_id = extract_youtube_video_id(youtube_url)
+    video_id = validate_youtube_url(youtube_url)
     source_method = "video"
 
     # Try to use transcript if provided, or fetch it
@@ -684,8 +666,8 @@ async def _perform_youtube_followup(
     try:
         # Configure generation - use lower token limit for concise answers
         generate_config = types.GenerateContentConfig(
-            temperature=YOUTUBE_TEMPERATURE,
-            max_output_tokens=YOUTUBE_FOLLOWUP_MAX_TOKENS,
+            temperature=YOUTUBE_LIMITS.TEMPERATURE,
+            max_output_tokens=YOUTUBE_LIMITS.FOLLOWUP_MAX_TOKENS,
         )
 
         response = await asyncio.to_thread(
@@ -729,7 +711,7 @@ async def _perform_youtube_followup(
             user_id=user_id,
             text_preview=youtube_url,
         )
-        return YOUTUBE_ERRORS.FOLLOWUP_ERROR, 0, 0, 0
+        return S.YOUTUBE_FOLLOWUP_ERROR, 0, 0, 0
 
 
 async def summarize_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -755,9 +737,9 @@ async def summarize_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     # Extract video ID for deduplication
-    video_id = extract_youtube_video_id(youtube_url)
+    video_id = validate_youtube_url(youtube_url)
     if not video_id:
-        await message.reply_text(YOUTUBE_ERRORS.INVALID_URL)
+        await message.reply_text(S.YOUTUBE_INVALID_URL)
         return
 
     # Check for duplicate request (webhook retry)
@@ -768,7 +750,7 @@ async def summarize_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     # Show status message immediately so user knows bot is processing
-    status_message = await message.reply_text(GENERAL_ERRORS.VIDEO_RECEIVED)
+    status_message = await message.reply_text(S.VIDEO_RECEIVED)
 
     # Check rate limit
     allowed, error_message = user_manager.check_rate_limit(user_id)
@@ -788,7 +770,7 @@ async def summarize_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id,
             message_id=status_message.message_id,
-            text=YOUTUBE_ERRORS.METADATA_ERROR,
+            text=S.YOUTUBE_METADATA_ERROR,
         )
         return
 
@@ -801,7 +783,7 @@ async def summarize_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id,
             message_id=status_message.message_id,
-            text=YOUTUBE_ERRORS.LIVE_VIDEO,
+            text=S.YOUTUBE_LIVE_VIDEO,
         )
         return
 
@@ -811,14 +793,14 @@ async def summarize_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     ) // 60  # Round up to nearest minute
 
     # Check max duration limit (60 minutes)
-    if video_duration_minutes > YOUTUBE_MAX_DURATION_MINUTES:
+    if video_duration_minutes > YOUTUBE_LIMITS.MAX_DURATION_MINUTES:
         _clear_youtube_cache(user_id, video_id)
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id,
             message_id=status_message.message_id,
-            text=YOUTUBE_ERRORS.VIDEO_DURATION_EXCEEDED.format(
+            text=S.YOUTUBE_VIDEO_DURATION_EXCEEDED.format(
                 duration=video_duration_minutes,
-                max_minutes=YOUTUBE_MAX_DURATION_MINUTES,
+                max_minutes=YOUTUBE_LIMITS.MAX_DURATION_MINUTES,
             ),
         )
         return
@@ -834,7 +816,9 @@ async def summarize_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             f"YouTube [{video_id}]: Transcript available, billing {billable_minutes} min"
         )
     else:
-        billable_minutes = video_duration_minutes * YOUTUBE_NO_TRANSCRIPT_MULTIPLIER
+        billable_minutes = (
+            video_duration_minutes * YOUTUBE_LIMITS.NO_TRANSCRIPT_MULTIPLIER
+        )
         logger.debug(
             f"YouTube [{video_id}]: No transcript, billing {billable_minutes} min (3x)"
         )
@@ -857,7 +841,7 @@ async def summarize_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await context.bot.edit_message_text(
         chat_id=update.effective_chat.id,
         message_id=status_message.message_id,
-        text=GENERAL_ERRORS.PREPARING_SUMMARY,
+        text=S.PREPARING_SUMMARY,
     )
 
     try:
@@ -909,8 +893,11 @@ async def summarize_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 # Store video URL and question index in callback data
                 callback_data = json.dumps({"u": youtube_url, "q": i})
                 # Truncate question text for button
-                if len(question) > QUESTION_BUTTON_MAX_LENGTH:
-                    button_text = question[: QUESTION_BUTTON_MAX_LENGTH - 3] + "..."
+                if len(question) > YOUTUBE_LIMITS.QUESTION_BUTTON_MAX_LENGTH:
+                    button_text = (
+                        question[: YOUTUBE_LIMITS.QUESTION_BUTTON_MAX_LENGTH - 3]
+                        + "..."
+                    )
                 else:
                     button_text = question
                 buttons.append(
@@ -918,11 +905,7 @@ async def summarize_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 )
 
         # Add stats/subscribe button at the bottom
-        stats_button_text = (
-            FORMATTING_LABELS.STATS_BUTTON
-            if is_premium
-            else FORMATTING_LABELS.SUBSCRIBE_BUTTON
-        )
+        stats_button_text = S.BTN_STATS if is_premium else S.BTN_SUBSCRIBE
         buttons.append(
             [InlineKeyboardButton(stats_button_text, callback_data="stats_show")]
         )
@@ -960,7 +943,7 @@ async def summarize_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 context=context,
                 chat_id=update.effective_chat.id,
                 message_id=status_message.message_id,
-                text=YOUTUBE_ERRORS.SUMMARY_ERROR,
+                text=S.YOUTUBE_SUMMARY_ERROR,
                 parse_mode=ParseMode.HTML,
                 fallback_reply=message,
             )
@@ -996,7 +979,7 @@ async def handle_youtube_question_callback(
         question_index = data.get("q")
 
         if not youtube_url or question_index is None:
-            await query.message.reply_text(GENERAL_ERRORS.INVALID_CALLBACK_DATA)
+            await query.message.reply_text(S.INVALID_CALLBACK_DATA)
             return
 
         # Get the stored question
@@ -1004,7 +987,7 @@ async def handle_youtube_question_callback(
         questions = context.chat_data.get(questions_key, [])
 
         if question_index >= len(questions):
-            await query.message.reply_text(YOUTUBE_ERRORS.QUESTION_NOT_FOUND)
+            await query.message.reply_text(S.YOUTUBE_QUESTION_NOT_FOUND)
             return
 
         # Check if this question was already answered
@@ -1012,7 +995,7 @@ async def handle_youtube_question_callback(
         answered_questions = context.chat_data.get(answered_key, set())
         if question_index in answered_questions:
             try:
-                await query.answer(YOUTUBE_ERRORS.QUESTION_ALREADY_ANSWERED)
+                await query.answer(S.YOUTUBE_QUESTION_ALREADY_ANSWERED)
             except Exception:
                 pass  # Callback may have expired
             return
@@ -1033,7 +1016,7 @@ async def handle_youtube_question_callback(
 
         # Send "thinking" message with the question
         status_message = await query.message.reply_text(
-            f"{S.LABEL_QUESTION} {escape_html(question)}\n\n<i>{S.PREPARING_ANSWER}</i>",
+            f"{S.LABEL_QUESTION} {safe_html(question)}\n\n<i>{S.PREPARING_ANSWER}</i>",
             parse_mode=ParseMode.HTML,
         )
 
@@ -1072,13 +1055,19 @@ async def handle_youtube_question_callback(
             callback_data = json.dumps({"u": youtube_url, "q": i})
             if i in answered_questions:
                 # Add checkmark to answered questions
-                if len(q) > QUESTION_BUTTON_MAX_LENGTH - 5:
-                    button_text = "✓ " + q[: QUESTION_BUTTON_MAX_LENGTH - 5] + "..."
+                if len(q) > YOUTUBE_LIMITS.QUESTION_BUTTON_MAX_LENGTH - 5:
+                    button_text = (
+                        "✓ "
+                        + q[: YOUTUBE_LIMITS.QUESTION_BUTTON_MAX_LENGTH - 5]
+                        + "..."
+                    )
                 else:
                     button_text = "✓ " + q
             else:
-                if len(q) > QUESTION_BUTTON_MAX_LENGTH:
-                    button_text = q[: QUESTION_BUTTON_MAX_LENGTH - 3] + "..."
+                if len(q) > YOUTUBE_LIMITS.QUESTION_BUTTON_MAX_LENGTH:
+                    button_text = (
+                        q[: YOUTUBE_LIMITS.QUESTION_BUTTON_MAX_LENGTH - 3] + "..."
+                    )
                 else:
                     button_text = q
             new_buttons.append(
@@ -1087,11 +1076,7 @@ async def handle_youtube_question_callback(
 
         # Add stats/subscribe button at the bottom (same as original)
         is_premium = is_user_premium(user_id)
-        stats_button_text = (
-            FORMATTING_LABELS.STATS_BUTTON
-            if is_premium
-            else FORMATTING_LABELS.SUBSCRIBE_BUTTON
-        )
+        stats_button_text = S.BTN_STATS if is_premium else S.BTN_SUBSCRIBE
         new_buttons.append(
             [InlineKeyboardButton(stats_button_text, callback_data="stats_show")]
         )
@@ -1104,7 +1089,7 @@ async def handle_youtube_question_callback(
             logger.debug(f"Could not update keyboard: {e}")
 
         # Format and send response
-        formatted_output = f"{S.LABEL_QUESTION} {escape_html(question)}\n\n{S.LABEL_ANSWER}\n{escape_html(answer)}"
+        formatted_output = f"{S.LABEL_QUESTION} {safe_html(question)}\n\n{S.LABEL_ANSWER}\n{safe_html(answer)}"
 
         await safe_edit_message_text(
             context=context,
@@ -1117,7 +1102,7 @@ async def handle_youtube_question_callback(
 
     except json.JSONDecodeError:
         logger.error(f"Invalid callback data: {query.data}")
-        await query.message.reply_text(YOUTUBE_ERRORS.INVALID_CALLBACK_DATA)
+        await query.message.reply_text(S.YOUTUBE_INVALID_CALLBACK_DATA)
     except Exception as e:
         log_error_with_context(
             e,
@@ -1125,4 +1110,4 @@ async def handle_youtube_question_callback(
             user_id=user_id,
             text_preview=locals().get("youtube_url"),
         )
-        await query.message.reply_text(YOUTUBE_ERRORS.FOLLOWUP_ERROR)
+        await query.message.reply_text(S.YOUTUBE_FOLLOWUP_ERROR)

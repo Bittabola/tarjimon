@@ -11,12 +11,11 @@ from telegram.constants import ParseMode
 
 from config import (
     logger,
-    MAX_IMAGE_SIZE_MB,
     GEMINI_MODEL_NAME,
-    FREE_TRANSLATION_LIMIT,
     SUBSCRIPTION_PLAN,
     PROMPTS,
 )
+from constants import IMAGE_LIMITS, SUBSCRIPTION_LIMITS
 from database import (
     log_token_usage_to_db,
     is_user_premium,
@@ -26,16 +25,11 @@ from database import (
 )
 from user_management import user_manager
 import strings as S
-from errors import (
-    GENERAL_ERRORS,
-    INPUT_VALIDATION_ERRORS,
-    FORMATTING_LABELS,
-)
+from utils import safe_html
 from google.genai import types
 
 from .common import (
     get_gemini_client,
-    escape_html,
     get_stats_button,
     log_error_with_context,
     ensure_free_user_sub,
@@ -62,7 +56,7 @@ def _format_translation_output(
     )
 
     if not translated_text:
-        return GENERAL_ERRORS.GENERIC_ERROR
+        return S.GENERIC_ERROR
 
     # Handle structured response for image + caption
     if has_image and has_caption:
@@ -80,28 +74,26 @@ def _format_translation_output(
 
         # Fallback: treat as combined content
         logger.info("Using fallback formatting for image+caption")
-        return FORMATTING_LABELS.IMAGE_AND_TEXT_TRANSLATION + escape_html(
-            translated_text
-        )
+        return S.LABEL_IMAGE_AND_TEXT_TRANSLATION + safe_html(translated_text)
 
     # Handle single content types
     if has_image and not has_caption:
         # Image only (OCR extraction)
         if "allaqachon o'zbek tilida" in translated_text.lower():
-            return FORMATTING_LABELS.IMAGE_RESULT + escape_html(translated_text)
+            return S.LABEL_IMAGE_RESULT + safe_html(translated_text)
         elif "rasmda matn topilmadi" in translated_text.lower():
-            return FORMATTING_LABELS.IMAGE_RESULT + escape_html(translated_text)
+            return S.LABEL_IMAGE_RESULT + safe_html(translated_text)
         else:
-            return FORMATTING_LABELS.IMAGE_TRANSLATION + escape_html(translated_text)
+            return S.LABEL_IMAGE_TRANSLATION + safe_html(translated_text)
     elif not has_image:
         # Text message only
         if "allaqachon o'zbek tilida" in translated_text.lower():
-            return FORMATTING_LABELS.TEXT_RESULT + escape_html(translated_text)
+            return S.LABEL_TEXT_RESULT + safe_html(translated_text)
         else:
-            return FORMATTING_LABELS.TEXT_TRANSLATION + escape_html(translated_text)
+            return S.LABEL_TEXT_TRANSLATION + safe_html(translated_text)
     else:
         # Fallback for any other case
-        return escape_html(translated_text)
+        return safe_html(translated_text)
 
 
 def _parse_structured_response(response: str) -> str:
@@ -134,27 +126,21 @@ def _parse_structured_response(response: str) -> str:
 
         # Add image section (escape HTML in AI-generated content)
         if image_text:
-            escaped_image_text = escape_html(image_text)
+            escaped_image_text = safe_html(image_text)
             if "allaqachon o'zbek tilida" in image_text.lower():
-                output_parts.append(FORMATTING_LABELS.IMAGE_RESULT + escaped_image_text)
+                output_parts.append(S.LABEL_IMAGE_RESULT + escaped_image_text)
             elif "rasmda matn topilmadi" in image_text.lower():
-                output_parts.append(FORMATTING_LABELS.IMAGE_RESULT + escaped_image_text)
+                output_parts.append(S.LABEL_IMAGE_RESULT + escaped_image_text)
             else:
-                output_parts.append(
-                    FORMATTING_LABELS.IMAGE_TRANSLATION + escaped_image_text
-                )
+                output_parts.append(S.LABEL_IMAGE_TRANSLATION + escaped_image_text)
 
         # Add caption section (escape HTML in AI-generated content)
         if caption_text:
-            escaped_caption_text = escape_html(caption_text)
+            escaped_caption_text = safe_html(caption_text)
             if "allaqachon o'zbek tilida" in caption_text.lower():
-                output_parts.append(
-                    FORMATTING_LABELS.TEXT_RESULT + escaped_caption_text
-                )
+                output_parts.append(S.LABEL_TEXT_RESULT + escaped_caption_text)
             else:
-                output_parts.append(
-                    FORMATTING_LABELS.TEXT_TRANSLATION + escaped_caption_text
-                )
+                output_parts.append(S.LABEL_TEXT_TRANSLATION + escaped_caption_text)
 
         # Join sections with double newline
         final_result = "\n\n".join(output_parts)
@@ -167,7 +153,7 @@ def _parse_structured_response(response: str) -> str:
         # Fallback to original response if parsing fails
         logger.error(f"Failed to parse structured response: {e}")
         logger.error(f"Original response was: {response[:500]}...")
-        return FORMATTING_LABELS.TRANSLATION + escape_html(response)
+        return S.LABEL_TRANSLATION + safe_html(response)
 
 
 async def _perform_single_model_translation(
@@ -234,7 +220,7 @@ async def _perform_single_model_translation(
         log_error_with_context(
             e, context_info={"operation": "single_model_translation"}, user_id=user_id
         )
-        return GENERAL_ERRORS.GENERIC_ERROR, 0, 0, 0
+        return S.GENERIC_ERROR, 0, 0, 0
 
 
 async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -264,7 +250,7 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     # Show status message immediately so user knows bot is processing
-    status_message = await message.reply_text(GENERAL_ERRORS.PROCESSING)
+    status_message = await message.reply_text(S.PROCESSING)
 
     allowed, error_message = user_manager.check_rate_limit(user_id)
     if not allowed:
@@ -307,7 +293,7 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if subscription:
             translation_remaining = subscription.get("translation_remaining", 0)
         else:
-            translation_remaining = FREE_TRANSLATION_LIMIT
+            translation_remaining = SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS
 
         if translation_remaining <= 0:
             plan = SUBSCRIPTION_PLAN
@@ -319,7 +305,7 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 chat_id=update.effective_chat.id,
                 message_id=status_message.message_id,
                 text=S.TRANSLATION_LIMIT_EXCEEDED_FREE.format(
-                    free_limit=FREE_TRANSLATION_LIMIT,
+                    free_limit=SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS,
                     stars=plan["stars"],
                     translation_limit=plan["translation_limit"],
                     youtube_limit=plan["youtube_minutes_limit"],
@@ -339,7 +325,7 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id,
             message_id=status_message.message_id,
-            text=GENERAL_ERRORS.TRANSLATING,
+            text=S.TRANSLATING,
         )
 
         if message.photo or (
@@ -358,12 +344,12 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                     message.document.mime_type
                 )  # Use actual MIME type from document
 
-            if file_size and file_size > MAX_IMAGE_SIZE_MB * 1024 * 1024:
+            if file_size and file_size > IMAGE_LIMITS.MAX_IMAGE_SIZE_MB * 1024 * 1024:
                 await context.bot.edit_message_text(
                     chat_id=update.effective_chat.id,
                     message_id=status_message.message_id,
-                    text=INPUT_VALIDATION_ERRORS.IMAGE_TOO_LARGE.format(
-                        max_size=MAX_IMAGE_SIZE_MB
+                    text=S.IMAGE_TOO_LARGE.format(
+                        max_size=IMAGE_LIMITS.MAX_IMAGE_SIZE_MB
                     ),
                 )
                 return
@@ -383,7 +369,7 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await context.bot.edit_message_text(
                 chat_id=update.effective_chat.id,
                 message_id=status_message.message_id,
-                text=INPUT_VALIDATION_ERRORS.SEND_TEXT_OR_IMAGE,
+                text=S.SEND_TEXT_OR_IMAGE,
             )
             return
 
@@ -391,7 +377,7 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await context.bot.edit_message_text(
                 chat_id=update.effective_chat.id,
                 message_id=status_message.message_id,
-                text=INPUT_VALIDATION_ERRORS.NO_CONTENT,
+                text=S.NO_CONTENT,
             )
             return
 
@@ -445,7 +431,7 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         stats_keyboard = get_stats_button(user_id)
 
         # Split if message is too long
-        output_text = formatted_output or GENERAL_ERRORS.GENERIC_ERROR
+        output_text = formatted_output or S.GENERIC_ERROR
         parts = split_message(output_text)
 
         if len(parts) > 1:
@@ -482,6 +468,6 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await context.bot.edit_message_text(
                 chat_id=update.effective_chat.id,
                 message_id=status_message.message_id,
-                text=GENERAL_ERRORS.GENERIC_ERROR,
+                text=S.GENERIC_ERROR,
                 parse_mode=ParseMode.HTML,
             )

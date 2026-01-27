@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import threading
 import traceback
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -12,31 +11,20 @@ from telegram.ext import ContextTypes
 from config import (
     logger,
     GEMINI_API_KEY,
-    ERROR_LOG_CONTEXT_ENABLED,
-    ERROR_LOG_MAX_TEXT_PREVIEW,
-    DEBUG_INCLUDE_USER_CONTEXT,
-    FREE_YOUTUBE_MINUTES_LIMIT,
-    FREE_TRANSLATION_LIMIT,
 )
-from constants import TELEGRAM_CONSTANTS
+from constants import (
+    TELEGRAM_CONSTANTS,
+    ERROR_LOG_CONSTANTS,
+    SUBSCRIPTION_LIMITS,
+)
 from database import (
     log_error_to_db,
     is_user_premium,
     ensure_free_user_subscription,
 )
-from utils import (
-    safe_html,
-    validate_youtube_url,
-    extract_youtube_url as utils_extract_youtube_url,
-)
-from errors import FORMATTING_LABELS
+import strings as S
 from google import genai
 
-
-# YouTube URL regex pattern - matches various YouTube URL formats
-YOUTUBE_URL_PATTERN = re.compile(
-    r"(?:https?://)?(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([a-zA-Z0-9_-]{11})"
-)
 
 # Gemini client - lazy initialization to avoid crash if API key not set at import time
 _gemini_client = None
@@ -53,37 +41,6 @@ def get_gemini_client() -> genai.Client:
     return _gemini_client
 
 
-def escape_html(text: str) -> str:
-    """Escape HTML special characters in text to prevent injection."""
-    return safe_html(text)
-
-
-def extract_youtube_video_id(url: str) -> str | None:
-    """
-    Extract video ID from YouTube URL.
-
-    Args:
-        url: YouTube URL
-
-    Returns:
-        Video ID if found, None otherwise
-    """
-    return validate_youtube_url(url)
-
-
-def extract_youtube_url(text: str) -> str | None:
-    """
-    Extract YouTube URL from text if present.
-
-    Args:
-        text: Input text that may contain a YouTube URL
-
-    Returns:
-        Full YouTube URL if found, None otherwise
-    """
-    return utils_extract_youtube_url(text)
-
-
 def ensure_free_user_sub(user_id: int) -> None:
     """
     Ensure a free user has a subscription record with initial limits.
@@ -91,8 +48,8 @@ def ensure_free_user_sub(user_id: int) -> None:
     """
     ensure_free_user_subscription(
         user_id,
-        youtube_minutes=FREE_YOUTUBE_MINUTES_LIMIT,
-        translations=FREE_TRANSLATION_LIMIT,
+        youtube_minutes=SUBSCRIPTION_LIMITS.FREE_YOUTUBE_MINUTES,
+        translations=SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS,
     )
 
 
@@ -110,9 +67,9 @@ def get_stats_button(user_id: int) -> InlineKeyboardMarkup:
     is_premium_user = is_user_premium(user_id)
 
     if is_premium_user:
-        button_text = FORMATTING_LABELS.STATS_BUTTON
+        button_text = S.BTN_STATS
     else:
-        button_text = FORMATTING_LABELS.SUBSCRIBE_BUTTON
+        button_text = S.BTN_SUBSCRIBE
 
     return InlineKeyboardMarkup(
         [
@@ -339,7 +296,7 @@ def log_error_with_context(
     text_preview: str = None,
 ):
     """Enhanced error logging with contextual information. Also logs to database."""
-    if not ERROR_LOG_CONTEXT_ENABLED:
+    if not ERROR_LOG_CONSTANTS.CONTEXT_ENABLED:
         logger.error(f"Error: {error}")
         return
 
@@ -348,12 +305,12 @@ def log_error_with_context(
         "error_message": str(error),
     }
 
-    if DEBUG_INCLUDE_USER_CONTEXT and user_id:
+    if ERROR_LOG_CONSTANTS.INCLUDE_USER_CONTEXT and user_id:
         error_details["user_id"] = user_id
 
     if text_preview and len(text_preview) > 0:
-        preview = text_preview[:ERROR_LOG_MAX_TEXT_PREVIEW]
-        if len(text_preview) > ERROR_LOG_MAX_TEXT_PREVIEW:
+        preview = text_preview[: ERROR_LOG_CONSTANTS.MAX_TEXT_PREVIEW]
+        if len(text_preview) > ERROR_LOG_CONSTANTS.MAX_TEXT_PREVIEW:
             preview += "..."
         error_details["text_preview"] = preview
 

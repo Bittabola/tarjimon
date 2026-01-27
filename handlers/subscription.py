@@ -10,12 +10,11 @@ from telegram.constants import ParseMode
 import strings as S
 from config import (
     logger,
-    FREE_YOUTUBE_MINUTES_LIMIT,
-    FREE_TRANSLATION_LIMIT,
     SUBSCRIPTION_PLAN,
     format_date_uzbek,
     get_days_remaining,
 )
+from constants import SUBSCRIPTION_LIMITS
 from database import (
     is_user_premium,
     activate_premium,
@@ -61,14 +60,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         subscription = get_user_subscription(user_id)
         if subscription:
             youtube_minutes_remaining = subscription.get(
-                "youtube_minutes_remaining", FREE_YOUTUBE_MINUTES_LIMIT
+                "youtube_minutes_remaining", SUBSCRIPTION_LIMITS.FREE_YOUTUBE_MINUTES
             )
             translation_remaining = subscription.get(
-                "translation_remaining", FREE_TRANSLATION_LIMIT
+                "translation_remaining", SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS
             )
         else:
-            youtube_minutes_remaining = FREE_YOUTUBE_MINUTES_LIMIT
-            translation_remaining = FREE_TRANSLATION_LIMIT
+            youtube_minutes_remaining = SUBSCRIPTION_LIMITS.FREE_YOUTUBE_MINUTES
+            translation_remaining = SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS
 
         status_text = S.STATUS_FREE.format(
             youtube_minutes=youtube_minutes_remaining,
@@ -82,8 +81,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         S.WELCOME_MESSAGE.format(
             status_text=status_text,
-            free_youtube_minutes=FREE_YOUTUBE_MINUTES_LIMIT,
-            free_translations=FREE_TRANSLATION_LIMIT,
+            free_youtube_minutes=SUBSCRIPTION_LIMITS.FREE_YOUTUBE_MINUTES,
+            free_translations=SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS,
             premium_youtube_minutes=plan["youtube_minutes_limit"],
             premium_translations=plan["translation_limit"],
         ),
@@ -129,8 +128,8 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
     else:
         limits_text = S.SUBSCRIBE_FREE_USER_INFO.format(
-            free_youtube_minutes=FREE_YOUTUBE_MINUTES_LIMIT,
-            free_translations=FREE_TRANSLATION_LIMIT,
+            free_youtube_minutes=SUBSCRIPTION_LIMITS.FREE_YOUTUBE_MINUTES,
+            free_translations=SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS,
             stars=plan["stars"],
             premium_youtube_minutes=plan["youtube_minutes_limit"],
             premium_translations=plan["translation_limit"],
@@ -189,8 +188,8 @@ async def handle_subscribe_callback(
             )
         else:
             limits_text = S.SUBSCRIBE_FREE_USER_INFO.format(
-                free_youtube_minutes=FREE_YOUTUBE_MINUTES_LIMIT,
-                free_translations=FREE_TRANSLATION_LIMIT,
+                free_youtube_minutes=SUBSCRIPTION_LIMITS.FREE_YOUTUBE_MINUTES,
+                free_translations=SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS,
                 stars=plan["stars"],
                 premium_youtube_minutes=plan["youtube_minutes_limit"],
                 premium_translations=plan["translation_limit"],
@@ -276,8 +275,8 @@ async def handle_stats_callback(
             translation_remaining = subscription.get("translation_remaining", 0)
         else:
             # New user - show full free limits
-            youtube_minutes_remaining = FREE_YOUTUBE_MINUTES_LIMIT
-            translation_remaining = FREE_TRANSLATION_LIMIT
+            youtube_minutes_remaining = SUBSCRIPTION_LIMITS.FREE_YOUTUBE_MINUTES
+            translation_remaining = SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS
 
         button_text = f"{S.BTN_SUBSCRIBE} - {plan['stars']} Yulduz"
         keyboard = InlineKeyboardMarkup(
@@ -287,9 +286,9 @@ async def handle_stats_callback(
         await query.message.reply_text(
             S.STATS_FREE.format(
                 youtube_minutes=youtube_minutes_remaining,
-                free_youtube_minutes=FREE_YOUTUBE_MINUTES_LIMIT,
+                free_youtube_minutes=SUBSCRIPTION_LIMITS.FREE_YOUTUBE_MINUTES,
                 translations=translation_remaining,
-                free_translations=FREE_TRANSLATION_LIMIT,
+                free_translations=SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS,
                 stars=plan["stars"],
                 premium_youtube_minutes=plan["youtube_minutes_limit"],
                 premium_translations=plan["translation_limit"],

@@ -10,10 +10,10 @@ from config import (
     WEBHOOK_SECRET,
     logger,
     validate_config,
-    SESSION_CLEANUP_INTERVAL,
     FEEDBACK_BOT_TOKEN,
     FEEDBACK_ADMIN_ID,
 )
+from constants import SESSION_CONSTANTS
 from database import init_db
 from user_management import user_manager
 from admin_dashboard import router as admin_router
@@ -40,9 +40,12 @@ async def _session_cleanup_loop():
     while True:
         try:
             # Normal sleep interval, with backoff if errors are accumulating
-            sleep_time = SESSION_CLEANUP_INTERVAL
+            sleep_time = SESSION_CONSTANTS.CLEANUP_INTERVAL_SECONDS
             if _cleanup_consecutive_errors >= _CLEANUP_MAX_CONSECUTIVE_ERRORS:
-                sleep_time = SESSION_CLEANUP_INTERVAL * _CLEANUP_BACKOFF_MULTIPLIER
+                sleep_time = (
+                    SESSION_CONSTANTS.CLEANUP_INTERVAL_SECONDS
+                    * _CLEANUP_BACKOFF_MULTIPLIER
+                )
                 logger.warning(
                     f"Cleanup task in backoff mode due to {_cleanup_consecutive_errors} consecutive errors"
                 )
@@ -169,7 +172,7 @@ from telegram.ext import (  # noqa: E402
     ContextTypes,
     filters,
 )
-from telegram.error import TimedOut, NetworkError
+from telegram.error import TimedOut, NetworkError  # noqa: E402
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -181,7 +184,9 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
     # Suppress transient network errors - they're expected occasionally
     if isinstance(error, (TimedOut, NetworkError)):
-        logger.warning(f"Transient network error (suppressed): {type(error).__name__}: {error}")
+        logger.warning(
+            f"Transient network error (suppressed): {type(error).__name__}: {error}"
+        )
         return
 
     # Log other errors for investigation
@@ -301,7 +306,9 @@ async def webhook(request: Request):
                 return Response(status_code=403)
         else:
             # Log warning if webhook secret is not configured
-            logger.warning("WEBHOOK_SECRET not configured - webhook requests are not authenticated!")
+            logger.warning(
+                "WEBHOOK_SECRET not configured - webhook requests are not authenticated!"
+            )
 
         # Get the request body as JSON
         data = await request.json()
@@ -329,7 +336,9 @@ async def feedback_webhook(request: Request):
 
     # Check if feedback feature is configured
     if not FEEDBACK_BOT_TOKEN or not FEEDBACK_ADMIN_ID:
-        logger.debug("Feedback webhook called but FEEDBACK_BOT_TOKEN or FEEDBACK_ADMIN_ID not configured")
+        logger.debug(
+            "Feedback webhook called but FEEDBACK_BOT_TOKEN or FEEDBACK_ADMIN_ID not configured"
+        )
         return Response(status_code=200)
 
     try:

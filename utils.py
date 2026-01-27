@@ -8,7 +8,8 @@ import html
 import re
 import functools
 import asyncio
-from typing import Optional, Callable, TypeVar, ParamSpec
+from collections.abc import Callable
+from typing import TypeVar, ParamSpec
 from config import logger
 import strings as S
 
@@ -22,7 +23,7 @@ YOUTUBE_URL_PATTERN = re.compile(
 )
 
 
-def safe_html(text: str, max_length: Optional[int] = None) -> str:
+def safe_html(text: str, max_length: int | None = None) -> str:
     """
     Escape HTML special characters and optionally truncate text.
 
@@ -50,7 +51,7 @@ def safe_html(text: str, max_length: Optional[int] = None) -> str:
     return escaped
 
 
-def validate_youtube_url(url: str) -> Optional[str]:
+def validate_youtube_url(url: str) -> str | None:
     """
     Validate and extract video ID from a YouTube URL.
 
@@ -60,7 +61,7 @@ def validate_youtube_url(url: str) -> Optional[str]:
     Returns:
         Video ID if valid YouTube URL, None otherwise
     """
-    if not url or not isinstance(url, str):
+    if not url:
         return None
 
     # Strip whitespace
@@ -74,7 +75,7 @@ def validate_youtube_url(url: str) -> Optional[str]:
     return None
 
 
-def extract_youtube_url(text: str) -> Optional[str]:
+def extract_youtube_url(text: str) -> str | None:
     """
     Extract YouTube URL from text if present.
 
@@ -96,7 +97,7 @@ def extract_youtube_url(text: str) -> Optional[str]:
 
 def validate_text_input(
     text: str, max_length: int = 50000, min_length: int = 1
-) -> tuple[bool, Optional[str]]:
+) -> tuple[bool, str | None]:
     """
     Validate text input for processing.
 
@@ -122,7 +123,7 @@ def validate_text_input(
 
 def validate_image_size(
     file_size: int, max_size_mb: int = 10
-) -> tuple[bool, Optional[str]]:
+) -> tuple[bool, str | None]:
     """
     Validate image file size.
 
@@ -165,7 +166,7 @@ def retry_async(
     backoff_multiplier: float = 2.0,
     max_delay_seconds: float = 30.0,
     exceptions: tuple = (Exception,),
-    on_retry: Optional[Callable[[Exception, int], None]] = None,
+    on_retry: Callable[[Exception, int], None] | None = None,
 ) -> Callable[[Callable[P, T]], Callable[P, T]]:
     """
     Decorator for retrying async functions with exponential backoff.
@@ -234,7 +235,7 @@ def retry_sync(
     backoff_multiplier: float = 2.0,
     max_delay_seconds: float = 30.0,
     exceptions: tuple = (Exception,),
-    on_retry: Optional[Callable[[Exception, int], None]] = None,
+    on_retry: Callable[[Exception, int], None] | None = None,
 ) -> Callable[[Callable[P, T]], Callable[P, T]]:
     """
     Decorator for retrying synchronous functions with exponential backoff.
