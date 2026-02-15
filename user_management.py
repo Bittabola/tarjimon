@@ -149,16 +149,24 @@ class TokenBudgetManager:
         self, service: str, tokens_needed: int
     ) -> tuple[bool, str | None]:
         """Check if token request fits within monthly budget."""
-        current_usage = self.get_monthly_usage(service)
+        service_key = "gemini" if service.startswith("gemini") else service
+        current_usage = (
+            self.get_monthly_usage(service_key)
+            if service_key in self.monthly_limits
+            else 0
+        )
         total_usage = self.get_monthly_usage()
 
         # Check service-specific limit
-        if current_usage + tokens_needed > self.monthly_limits[service]:
-            remaining = max(0, self.monthly_limits[service] - current_usage)
+        if (
+            service_key in self.monthly_limits
+            and current_usage + tokens_needed > self.monthly_limits[service_key]
+        ):
+            remaining = max(0, self.monthly_limits[service_key] - current_usage)
             error_msg = S.MONTHLY_SERVICE_LIMIT.format(
                 service="Gemini",
                 used=current_usage,
-                limit=self.monthly_limits[service],
+                limit=self.monthly_limits[service_key],
                 remaining=remaining,
             )
             return False, error_msg

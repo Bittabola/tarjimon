@@ -74,6 +74,7 @@ Copy `.env.example` to `.env` and configure:
 | `TARJIMON_LOG_PATH` | No | Log directory (default: `logs`) |
 | `FEEDBACK_BOT_TOKEN` | No | Separate bot for feedback relay |
 | `FEEDBACK_ADMIN_ID` | No | Admin Telegram user ID for feedback |
+| `FEEDBACK_WEBHOOK_SECRET` | Conditional | Required when feedback relay is enabled; secret for `/feedback_webhook` |
 
 ## Deployment
 
@@ -110,13 +111,13 @@ Set `WEBHOOK_URL` to the ngrok URL, then run `python webhook.py`.
 ## Usage Limits
 
 ### Free Tier (resets every 30 days)
-- 30 YouTube video minutes
-- 30 translations
+- 10 YouTube video minutes
+- 10 translations
 - 20,000 tokens per day
 
-### Premium Tier (100 Telegram Stars)
-- 200 YouTube video minutes
-- 100 translations
+### Premium Tier (350 Telegram Stars)
+- 100 YouTube video minutes
+- 50 translations
 - 30-day subscription period
 
 ## API Endpoints
@@ -144,7 +145,6 @@ tarjimon/
 ├── config.py            # Configuration and environment loading
 ├── constants.py         # All limits and magic numbers
 ├── strings.py           # User-facing strings (Uzbek)
-├── errors.py            # Error message classes
 ├── database.py          # SQLite database management
 ├── user_management.py   # Session and rate limiting
 ├── utils.py             # General utilities

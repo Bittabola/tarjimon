@@ -150,12 +150,11 @@ def validate_text_input(text: str, max_length: int = 50000) -> tuple[bool, str |
 
 ### Error Handling
 
-- Use error classes from `errors.py` (which import from `strings.py`)
+- Use user-facing messages from `strings.py`
 - Log errors with `log_error_with_context()` for database tracking
 - Handle Telegram API errors gracefully
 
 ```python
-from errors import GENERAL_ERRORS, INPUT_VALIDATION_ERRORS
 from handlers.common import log_error_with_context
 
 try:
@@ -167,7 +166,7 @@ except Exception as e:
         user_id=user_id,
         text_preview=text[:200],
     )
-    return GENERAL_ERRORS.GENERIC_ERROR
+    return S.GENERIC_ERROR
 ```
 
 ### Async Patterns
@@ -212,7 +211,6 @@ tarjimon/
 ├── config.py            # Configuration, env vars, prompt loading
 ├── constants.py         # All magic numbers and limits
 ├── strings.py           # User-facing strings (Uzbek)
-├── errors.py            # Error message classes
 ├── database.py          # SQLite database management
 ├── user_management.py   # User session and rate limiting
 ├── utils.py             # General utility functions
@@ -278,6 +276,7 @@ Optional:
 - `SUPADATA_API_KEY` - YouTube transcript API
 - `ADMIN_USERNAME`, `ADMIN_PASSWORD` - Admin dashboard auth
 - `TARJIMON_DB_PATH` - Database directory (default: `data/sqlite_data`)
+- `FEEDBACK_WEBHOOK_SECRET` - Required when feedback webhook is enabled
 
 ## Common Gotchas
 

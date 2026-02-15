@@ -56,6 +56,7 @@ GEMINI_MODEL_NAME = os.environ.get("GEMINI_MODEL_NAME")
 # Webhook settings
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET")  # Secret token for webhook validation
+FEEDBACK_WEBHOOK_SECRET = os.environ.get("FEEDBACK_WEBHOOK_SECRET")
 
 # Supadata API (for YouTube transcripts)
 SUPADATA_API_KEY = os.environ.get("SUPADATA_API_KEY")
@@ -154,12 +155,17 @@ def get_days_remaining(iso_date: str) -> int | str:
         return "?"
 
 
-def validate_config(is_webhook: bool = False, check_prompts: bool = True):
+def validate_config(
+    is_webhook: bool = False,
+    check_prompts: bool = True,
+    require_webhook_secret: bool = True,
+) -> bool:
     """Validate that required environment variables and prompts are set.
 
     Args:
         is_webhook: If True, also validates webhook-specific config
         check_prompts: If True, validates that required prompts are loaded
+        require_webhook_secret: If True, requires WEBHOOK_SECRET to be configured
     """
     if not TELEGRAM_BOT_TOKEN:
         logger.error("Error: TELEGRAM_BOT_TOKEN environment variable not set.")
@@ -177,6 +183,22 @@ def validate_config(is_webhook: bool = False, check_prompts: bool = True):
             "Error: WEBHOOK_URL environment variable not set for webhook mode."
         )
         return False
+    if require_webhook_secret and not WEBHOOK_SECRET:
+        logger.error("Error: WEBHOOK_SECRET environment variable not set.")
+        return False
+
+    # Feedback settings must be complete when feature is enabled.
+    if FEEDBACK_BOT_TOKEN or FEEDBACK_ADMIN_ID:
+        if not FEEDBACK_BOT_TOKEN or not FEEDBACK_ADMIN_ID:
+            logger.error(
+                "Error: FEEDBACK_BOT_TOKEN and FEEDBACK_ADMIN_ID must both be configured."
+            )
+            return False
+        if not FEEDBACK_WEBHOOK_SECRET:
+            logger.error(
+                "Error: FEEDBACK_WEBHOOK_SECRET must be configured when feedback is enabled."
+            )
+            return False
 
     # Validate prompts (done after PROMPTS is loaded at module level)
     if check_prompts:
@@ -245,6 +267,7 @@ REQUIRED_PROMPTS = [
     ("youtube_summary", "with_transcript"),
     ("youtube_summary", "without_transcript"),
     ("youtube_followup", "with_transcript"),
+    ("youtube_followup", "with_summary"),
     ("youtube_followup", "without_transcript"),
 ]
 

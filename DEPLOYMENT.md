@@ -22,6 +22,7 @@ This guide covers deploying the Tarjimon Telegram bot to a VPS using Docker.
 | `ADMIN_PASSWORD` | No | Admin dashboard password (required to access `/admin`) |
 | `FEEDBACK_BOT_TOKEN` | No | Separate bot token for feedback feature (from @BotFather) |
 | `FEEDBACK_ADMIN_ID` | No | Your Telegram user ID to receive feedback messages |
+| `FEEDBACK_WEBHOOK_SECRET` | Conditional | Required when feedback feature is enabled; validates `/feedback_webhook` |
 
 ## Deployment Steps
 
@@ -61,6 +62,7 @@ TARJIMON_LOG_PATH=/app/logs
 # Optional: Feedback feature (requires separate bot)
 FEEDBACK_BOT_TOKEN=your_feedback_bot_token
 FEEDBACK_ADMIN_ID=your_telegram_user_id
+FEEDBACK_WEBHOOK_SECRET=your_feedback_webhook_secret
 EOF
 ```
 

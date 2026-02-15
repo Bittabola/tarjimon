@@ -32,6 +32,7 @@ from database import (
     get_user_subscription,
     get_user_remaining_limits,
     decrement_youtube_minutes,
+    increment_youtube_minutes,
 )
 from user_management import user_manager
 import strings as S
@@ -145,7 +146,7 @@ async def _check_youtube_limits(
     is_premium = is_user_premium(user_id)
     plan = SUBSCRIPTION_PLAN
 
-    # Build cost explanation for 3x multiplier
+    # Build cost explanation for configured multiplier.
     cost_explanation = ""
     if not has_transcript:
         cost_explanation = S.NO_TRANSCRIPT_COST_NOTE.format(
@@ -728,6 +729,7 @@ async def summarize_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     user_id = update.effective_user.id
     message = update.message
     text = message.text or message.caption or ""
+    reserved_minutes = 0
 
     # Extract YouTube URL from message
     youtube_url = extract_youtube_url(text)
@@ -805,9 +807,9 @@ async def summarize_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         return
 
-    # Pre-fetch transcript to determine billable minutes
-    # Videos without transcripts cost 3x more due to higher API usage
-    transcript_text, transcript_lang = await fetch_youtube_transcript(video_id)
+    # Pre-fetch transcript to determine billable minutes.
+    # Videos without transcripts cost more due to higher API usage.
+    transcript_text, _transcript_lang = await fetch_youtube_transcript(video_id)
     has_transcript = transcript_text is not None
 
     if has_transcript:
@@ -820,7 +822,7 @@ async def summarize_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             video_duration_minutes * YOUTUBE_LIMITS.NO_TRANSCRIPT_MULTIPLIER
         )
         logger.debug(
-            f"YouTube [{video_id}]: No transcript, billing {billable_minutes} min (3x)"
+            f"YouTube [{video_id}]: No transcript, billing {billable_minutes} min ({YOUTUBE_LIMITS.NO_TRANSCRIPT_MULTIPLIER}x)"
         )
 
     # Check limits based on subscription tier
@@ -836,6 +838,47 @@ async def summarize_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
     if not has_limit:
         return
+
+    # Budget guardrail before expensive Gemini call.
+    if has_transcript:
+        estimated_tokens = user_manager.estimate_tokens(transcript_text or "") + 4000
+    else:
+        estimated_tokens = max(4000, billable_minutes * 1200)
+
+    budget_ok, budget_error = user_manager.check_token_limits(
+        user_id=user_id,
+        service="gemini",
+        estimated_tokens=estimated_tokens,
+    )
+    if not budget_ok:
+        _clear_youtube_cache(user_id, video_id)
+        await context.bot.edit_message_text(
+            chat_id=update.effective_chat.id,
+            message_id=status_message.message_id,
+            text=budget_error,
+        )
+        return
+
+    # Reserve billable minutes before API call to avoid race conditions.
+    if not is_premium:
+        ensure_free_user_sub(user_id)
+
+    if not decrement_youtube_minutes(user_id, billable_minutes):
+        _clear_youtube_cache(user_id, video_id)
+        log_error_with_context(
+            RuntimeError("Could not reserve YouTube minutes"),
+            context_info={"operation": "youtube_quota_reservation", "url": youtube_url},
+            user_id=user_id,
+            text_preview=youtube_url,
+        )
+        await context.bot.edit_message_text(
+            chat_id=update.effective_chat.id,
+            message_id=status_message.message_id,
+            text=S.YOUTUBE_SUMMARY_ERROR,
+        )
+        return
+
+    reserved_minutes = billable_minutes
 
     # Update status message to show we're now summarizing
     await context.bot.edit_message_text(
@@ -874,14 +917,32 @@ async def summarize_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             )
             user_manager.record_token_usage(user_id, token_count)
 
-        # Decrement billable minutes (includes 3x multiplier for no-transcript videos)
-        if is_premium:
-            decrement_youtube_minutes(user_id, billable_minutes)
-        else:
-            # For free users, we need to track their usage too
-            # First ensure they have a subscription record, then decrement
-            ensure_free_user_sub(user_id)
-            decrement_youtube_minutes(user_id, billable_minutes)
+        # Refund reserved quota if summarization failed after reservation.
+        failed_summaries = {
+            S.YOUTUBE_SUMMARY_ERROR,
+            S.YOUTUBE_VIDEO_NOT_FOUND,
+            S.YOUTUBE_PRIVATE_VIDEO,
+            S.YOUTUBE_AGE_RESTRICTED,
+            S.YOUTUBE_VIDEO_TOO_LONG.format(max_minutes=YOUTUBE_LIMITS.MAX_DURATION_MINUTES),
+        }
+        if token_count <= 0 and summary in failed_summaries and reserved_minutes > 0:
+            if not increment_youtube_minutes(user_id, reserved_minutes):
+                log_error_with_context(
+                    RuntimeError("Could not refund YouTube minutes"),
+                    context_info={"operation": "youtube_quota_refund", "url": youtube_url},
+                    user_id=user_id,
+                    text_preview=youtube_url,
+                )
+            reserved_minutes = 0
+            await safe_edit_message_text(
+                context=context,
+                chat_id=update.effective_chat.id,
+                message_id=status_message.message_id,
+                text=summary,
+                parse_mode=ParseMode.HTML,
+                fallback_reply=message,
+            )
+            return
 
         # Format output using HTML (same as translation output)
         formatted_output, questions = _format_youtube_output(summary)
@@ -932,6 +993,17 @@ async def summarize_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             context.chat_data[f"yt_request_id_{youtube_url}"] = request_id
 
     except Exception as e:
+        if reserved_minutes > 0:
+            if not increment_youtube_minutes(user_id, reserved_minutes):
+                log_error_with_context(
+                    RuntimeError("Could not refund YouTube minutes after exception"),
+                    context_info={
+                        "operation": "youtube_quota_refund_exception",
+                        "url": youtube_url,
+                    },
+                    user_id=user_id,
+                    text_preview=youtube_url,
+                )
         log_error_with_context(
             e,
             context_info={"operation": "youtube_handler", "url": youtube_url},
@@ -1019,6 +1091,28 @@ async def handle_youtube_question_callback(
             f"{S.LABEL_QUESTION} {safe_html(question)}\n\n<i>{S.PREPARING_ANSWER}</i>",
             parse_mode=ParseMode.HTML,
         )
+
+        # Budget guardrail for follow-up answers.
+        context_source = transcript_text or summary_text or ""
+        estimated_tokens = user_manager.estimate_tokens(question) + 2000
+        if context_source:
+            estimated_tokens += user_manager.estimate_tokens(context_source[:40_000])
+
+        budget_ok, budget_error = user_manager.check_token_limits(
+            user_id=user_id,
+            service="gemini",
+            estimated_tokens=estimated_tokens,
+        )
+        if not budget_ok:
+            await safe_edit_message_text(
+                context=context,
+                chat_id=update.effective_chat.id,
+                message_id=status_message.message_id,
+                text=budget_error,
+                parse_mode=ParseMode.HTML,
+                fallback_reply=query.message,
+            )
+            return
 
         # Get the answer (pass transcript and summary if available)
         (

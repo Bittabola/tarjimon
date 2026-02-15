@@ -13,6 +13,7 @@ from config import (
 )
 from database import save_feedback, update_feedback_admin_msg_id
 import strings as S
+from utils import safe_html
 
 
 # Store users waiting to send feedback
@@ -95,7 +96,10 @@ async def handle_feedback_message(
     clear_pending_feedback(user_id)
 
     message = update.message
-    if not message or not message.text:
+    if not message:
+        return False
+
+    if not message.text:
         await message.reply_text(S.FEEDBACK_SEND_ERROR)
         return True
 
@@ -123,7 +127,11 @@ async def handle_feedback_message(
     if first_name:
         user_info += f" | {first_name}"
 
-    admin_text = f"<b>Yangi fikr-mulohaza</b>\n\n<b>Foydalanuvchi:</b> {user_info}\n\n<b>Xabar:</b>\n{feedback_text}"
+    admin_text = (
+        "<b>Yangi fikr-mulohaza</b>\n\n"
+        f"<b>Foydalanuvchi:</b> {safe_html(user_info)}\n\n"
+        f"<b>Xabar:</b>\n{safe_html(feedback_text)}"
+    )
 
     # Send to admin via feedback bot
     try:

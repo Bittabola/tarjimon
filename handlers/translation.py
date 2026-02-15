@@ -22,6 +22,7 @@ from database import (
     get_user_subscription,
     get_user_remaining_limits,
     decrement_translation_limit,
+    increment_translation_limit,
 )
 from user_management import user_manager
 import strings as S
@@ -319,6 +320,7 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     text_input = None
     image_data = None
     image_mime_type = "image/jpeg"  # Default for photos
+    reserved_translation = False
 
     try:
         # Update status message to show we're now translating
@@ -381,6 +383,55 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             )
             return
 
+        if text_input:
+            text_ok, text_error = user_manager.check_text_length(text_input)
+            if not text_ok:
+                await context.bot.edit_message_text(
+                    chat_id=update.effective_chat.id,
+                    message_id=status_message.message_id,
+                    text=text_error,
+                )
+                return
+
+        # Budget guardrail before model call.
+        estimated_tokens = user_manager.estimate_tokens(text_input or "")
+        if image_data:
+            # OCR and multimodal requests are significantly more expensive than text-only.
+            estimated_tokens += 6000
+
+        budget_ok, budget_error = user_manager.check_token_limits(
+            user_id=user_id,
+            service="gemini",
+            estimated_tokens=estimated_tokens,
+        )
+        if not budget_ok:
+            await context.bot.edit_message_text(
+                chat_id=update.effective_chat.id,
+                message_id=status_message.message_id,
+                text=budget_error,
+            )
+            return
+
+        # Reserve one translation credit before the expensive API call.
+        if not is_premium:
+            ensure_free_user_sub(user_id)
+
+        if not decrement_translation_limit(user_id):
+            log_error_with_context(
+                RuntimeError("Could not reserve translation quota"),
+                context_info={"operation": "translation_quota_reservation"},
+                user_id=user_id,
+                text_preview=text_input,
+            )
+            await context.bot.edit_message_text(
+                chat_id=update.effective_chat.id,
+                message_id=status_message.message_id,
+                text=S.GENERIC_ERROR,
+            )
+            return
+
+        reserved_translation = True
+
         (
             translated_text,
             token_count,
@@ -412,13 +463,22 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             )
             user_manager.record_token_usage(user_id, token_count)
 
-        # Decrement translation limit
-        if is_premium:
-            decrement_translation_limit(user_id)
-        else:
-            # For free users, ensure they have a subscription record, then decrement
-            ensure_free_user_sub(user_id)
-            decrement_translation_limit(user_id)
+        # If generation failed after quota reservation, refund the credit.
+        if token_count <= 0 and translated_text == S.GENERIC_ERROR:
+            if not increment_translation_limit(user_id):
+                log_error_with_context(
+                    RuntimeError("Could not refund translation quota"),
+                    context_info={"operation": "translation_quota_refund"},
+                    user_id=user_id,
+                    text_preview=text_input,
+                )
+            reserved_translation = False
+            await context.bot.edit_message_text(
+                chat_id=update.effective_chat.id,
+                message_id=status_message.message_id,
+                text=S.GENERIC_ERROR,
+            )
+            return
 
         # Format output with appropriate title and separate sections
         formatted_output = _format_translation_output(
@@ -458,6 +518,14 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             )
 
     except Exception as e:
+        if reserved_translation:
+            if not increment_translation_limit(user_id):
+                log_error_with_context(
+                    RuntimeError("Could not refund translation quota after failure"),
+                    context_info={"operation": "translation_quota_refund_exception"},
+                    user_id=user_id,
+                    text_preview=text_input,
+                )
         log_error_with_context(
             e,
             context_info={"operation": "main_translation_handler_single_model"},

@@ -840,6 +840,48 @@ def decrement_youtube_minutes(user_id: int, minutes: int) -> bool:
         return False
 
 
+def increment_youtube_minutes(user_id: int, minutes: int) -> bool:
+    """
+    Refund YouTube minutes back to the user's remaining quota.
+
+    Args:
+        user_id: Telegram user ID
+        minutes: Number of minutes to add back
+
+    Returns:
+        True if successful, False otherwise
+    """
+    if minutes <= 0:
+        return True
+
+    db_manager = DatabaseManager()
+    try:
+        with db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            now_iso = datetime.now(timezone.utc).isoformat()
+
+            cursor.execute(
+                """
+                UPDATE user_subscriptions
+                SET youtube_minutes_remaining = youtube_minutes_remaining + ?, updated_at = ?
+                WHERE user_id = ?
+            """,
+                (minutes, now_iso, user_id),
+            )
+
+            if cursor.rowcount > 0:
+                logger.debug(f"Refunded {minutes} YouTube minutes for user {user_id}")
+                return True
+            return False
+
+    except sqlite3.Error as e:
+        logger.error(f"Error refunding YouTube minutes for user {user_id}: {e}")
+        return False
+    except Exception as ex:
+        logger.error(f"Unexpected error in increment_youtube_minutes: {ex}")
+        return False
+
+
 def decrement_translation_limit(user_id: int) -> bool:
     """
     Decrement the user's remaining translation limit by 1.
@@ -875,6 +917,50 @@ def decrement_translation_limit(user_id: int) -> bool:
         return False
     except Exception as ex:
         logger.error(f"Unexpected error in decrement_translation_limit: {ex}")
+        return False
+
+
+def increment_translation_limit(user_id: int, amount: int = 1) -> bool:
+    """
+    Refund translation quota back to the user.
+
+    Args:
+        user_id: Telegram user ID
+        amount: Number of translation credits to add back
+
+    Returns:
+        True if successful, False otherwise
+    """
+    if amount <= 0:
+        return True
+
+    db_manager = DatabaseManager()
+    try:
+        with db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            now_iso = datetime.now(timezone.utc).isoformat()
+
+            cursor.execute(
+                """
+                UPDATE user_subscriptions
+                SET translation_remaining = translation_remaining + ?, updated_at = ?
+                WHERE user_id = ?
+            """,
+                (amount, now_iso, user_id),
+            )
+
+            if cursor.rowcount > 0:
+                logger.debug(
+                    f"Refunded {amount} translation credits for user {user_id}"
+                )
+                return True
+            return False
+
+    except sqlite3.Error as e:
+        logger.error(f"Error refunding translation limit for user {user_id}: {e}")
+        return False
+    except Exception as ex:
+        logger.error(f"Unexpected error in increment_translation_limit: {ex}")
         return False
 
 

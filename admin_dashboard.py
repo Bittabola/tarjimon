@@ -1,5 +1,6 @@
 """Admin dashboard module for Tarjimon bot."""
 
+import html
 import secrets
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
@@ -67,6 +68,13 @@ def format_currency(amount: float) -> str:
         return f"${amount:.3f}"
     else:
         return f"${amount:.6f}"
+
+
+def escape_html(value: object) -> str:
+    """Escape dynamic values before rendering in HTML."""
+    if value is None:
+        return "-"
+    return html.escape(str(value), quote=True)
 
 
 # Timezone constants for dashboard display
@@ -740,15 +748,18 @@ async def dashboard_errors(
     rows = ""
     for err in errors:
         timestamp = format_timestamp_dual_tz(err["timestamp"])
-        content_type = err["content_type"] or "-"
-        preview = (err["content_preview"] or "-")[:50]
+        content_type = escape_html(err["content_type"])
+        preview = escape_html((err["content_preview"] or "-")[:50])
+        error_type = escape_html(err["error_type"])
+        error_message = escape_html((err["error_message"] or "")[:100])
+        user_id = escape_html(err["user_id"])
 
         rows += f"""
         <tr>
             <td class="timestamp-cell">{timestamp}</td>
-            <td>{err["user_id"] or "-"}</td>
-            <td><span class="badge badge-error">{err["error_type"]}</span></td>
-            <td class="text-truncate">{err["error_message"][:100]}</td>
+            <td>{user_id}</td>
+            <td><span class="badge badge-error">{error_type}</span></td>
+            <td class="text-truncate">{error_message}</td>
             <td>{content_type}</td>
             <td class="text-truncate text-muted">{preview}</td>
         </tr>
@@ -791,7 +802,8 @@ async def dashboard_requests(
     rows = ""
     for req in requests:
         timestamp = format_timestamp_dual_tz(req["timestamp"])
-        tier_class = "badge-premium" if req["user_tier"] == "premium" else "badge-free"
+        user_tier = req["user_tier"] or "free"
+        tier_class = "badge-premium" if user_tier == "premium" else "badge-free"
 
         cost_html = f'<span class="loss">{format_currency(req["cost_usd"])}</span>'
 
@@ -818,18 +830,20 @@ async def dashboard_requests(
             else:
                 content_type = f"youtube ({duration}min)"
 
-        preview = (req["content_preview"] or "-")[:30]
+        escaped_content_type = escape_html(content_type)
+        escaped_preview = escape_html((req["content_preview"] or "-")[:30])
+        escaped_tier = escape_html(user_tier)
 
         rows += f"""
         <tr>
             <td class="timestamp-cell">{timestamp}</td>
             <td>{req["user_id"]}</td>
-            <td><span class="badge {tier_class}">{req["user_tier"]}</span></td>
-            <td>{content_type}</td>
+            <td><span class="badge {tier_class}">{escaped_tier}</span></td>
+            <td>{escaped_content_type}</td>
             <td>{cost_html}</td>
             <td>{revenue_html}</td>
             <td>{profit_html}</td>
-            <td class="text-truncate text-muted">{preview}</td>
+            <td class="text-truncate text-muted">{escaped_preview}</td>
         </tr>
         """
 

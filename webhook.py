@@ -8,6 +8,7 @@ from config import (
     TELEGRAM_BOT_TOKEN,
     WEBHOOK_URL,
     WEBHOOK_SECRET,
+    FEEDBACK_WEBHOOK_SECRET,
     logger,
     validate_config,
     FEEDBACK_BOT_TOKEN,
@@ -81,20 +82,19 @@ async def _session_cleanup_loop():
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events."""
     global _cleanup_task
+    app_initialized = False
     try:
         # Startup event
-        # Validate configuration (don't require WEBHOOK_URL during startup)
-        if not validate_config(is_webhook=False):
-            logger.critical("Configuration validation failed")
-            return
+        if not validate_config(is_webhook=False, require_webhook_secret=True):
+            raise RuntimeError("Configuration validation failed")
 
         # Initialize database
         if not init_db():
-            logger.critical("Database initialization failed")
-            return
+            raise RuntimeError("Database initialization failed")
 
         # Initialize the bot application
         await application.initialize()
+        app_initialized = True
 
         # Start session cleanup background task
         _cleanup_task = asyncio.create_task(_session_cleanup_loop())
@@ -107,7 +107,7 @@ async def lifespan(app: FastAPI):
             try:
                 await application.bot.set_webhook(
                     url=webhook_url,
-                    secret_token=WEBHOOK_SECRET if WEBHOOK_SECRET else None,
+                    secret_token=WEBHOOK_SECRET,
                 )
                 logger.info(f"Webhook set to {webhook_url}")
             except Exception as e:
@@ -116,6 +116,9 @@ async def lifespan(app: FastAPI):
             logger.info("WEBHOOK_URL not set - webhook will be configured externally")
 
         yield
+    except Exception as e:
+        logger.critical(f"Startup failed: {e}")
+        raise
     finally:
         # Shutdown event
         try:
@@ -127,6 +130,7 @@ async def lifespan(app: FastAPI):
                 except asyncio.CancelledError:
                     pass
                 logger.info("Session cleanup task stopped")
+                _cleanup_task = None
 
             # Persist all sessions before shutdown
             user_manager.persist_all_sessions()
@@ -135,7 +139,8 @@ async def lifespan(app: FastAPI):
             logger.info("Shutting down bot application")
 
             # Shutdown the application
-            await application.shutdown()
+            if app_initialized:
+                await application.shutdown()
 
         except Exception as e:
             logger.error(f"Error in shutdown: {e}")
@@ -298,17 +303,15 @@ async def webhook(request: Request):
     try:
         # Validate webhook secret token (required for security)
         secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
-        if WEBHOOK_SECRET:
-            if secret_header != WEBHOOK_SECRET:
-                logger.warning(
-                    f"Webhook request with invalid secret token from {request.client.host}"
-                )
-                return Response(status_code=403)
-        else:
-            # Log warning if webhook secret is not configured
+        client_host = request.client.host if request.client else "unknown"
+        if not WEBHOOK_SECRET:
+            logger.error("WEBHOOK_SECRET is missing; refusing webhook request.")
+            return Response(status_code=503)
+        if secret_header != WEBHOOK_SECRET:
             logger.warning(
-                "WEBHOOK_SECRET not configured - webhook requests are not authenticated!"
+                f"Webhook request with invalid secret token from {client_host}"
             )
+            return Response(status_code=403)
 
         # Get the request body as JSON
         data = await request.json()
@@ -333,6 +336,7 @@ async def feedback_webhook(request: Request):
     import httpx
     from database import get_feedback_by_admin_msg_id, mark_feedback_replied
     import strings as S
+    from utils import safe_html
 
     # Check if feedback feature is configured
     if not FEEDBACK_BOT_TOKEN or not FEEDBACK_ADMIN_ID:
@@ -340,6 +344,20 @@ async def feedback_webhook(request: Request):
             "Feedback webhook called but FEEDBACK_BOT_TOKEN or FEEDBACK_ADMIN_ID not configured"
         )
         return Response(status_code=200)
+
+    # Validate feedback webhook secret token (required for security)
+    secret_header = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+    client_host = request.client.host if request.client else "unknown"
+    if not FEEDBACK_WEBHOOK_SECRET:
+        logger.error(
+            "FEEDBACK_WEBHOOK_SECRET is missing while feedback feature is enabled."
+        )
+        return Response(status_code=503)
+    if secret_header != FEEDBACK_WEBHOOK_SECRET:
+        logger.warning(
+            f"Feedback webhook request with invalid secret token from {client_host}"
+        )
+        return Response(status_code=403)
 
     try:
         data = await request.json()
@@ -378,7 +396,7 @@ async def feedback_webhook(request: Request):
                 f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
                 json={
                     "chat_id": user_id,
-                    "text": f"<b>Javob:</b>\n\n{reply_text}",
+                    "text": f"<b>Javob:</b>\n\n{safe_html(reply_text)}",
                     "parse_mode": "HTML",
                 },
                 timeout=10.0,
