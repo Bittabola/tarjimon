@@ -278,7 +278,7 @@ WELCOME_MESSAGE: Final[str] = """Salom! Men sizga quyidagi xizmatlarni taklif qi
 <b>Bepul reja:</b> {free_youtube_minutes} daqiqa video, {free_translations} ta tarjima (30 kun)
 <b>Premium:</b> {premium_youtube_minutes} daqiqa video, {premium_translations} ta tarjima (30 kun)
 
-<i>Eslatma: Subtitrsiz videolar 3 barobar ko'proq limit sarflaydi. Xizmat Google serverlaridagi Gemini modeli asosida ishlaydi.</i>"""
+<i>Eslatma: Subtitrsiz videolar 5 barobar ko'proq limit sarflaydi. Xizmat Google serverlaridagi Gemini modeli asosida ishlaydi.</i>"""
 
 STATUS_PREMIUM: Final[str] = """<b>Premium obuna:</b> {date} gacha
 Qolgan limitlar: {youtube_minutes} daqiqa video, {translations} ta tarjima"""

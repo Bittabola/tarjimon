@@ -65,15 +65,15 @@ class SubscriptionLimits:
     """Subscription tier limits."""
 
     # Free tier
-    FREE_YOUTUBE_MINUTES: Final[int] = 30
-    FREE_TRANSLATIONS: Final[int] = 30
+    FREE_YOUTUBE_MINUTES: Final[int] = 10
+    FREE_TRANSLATIONS: Final[int] = 10
     FREE_PERIOD_DAYS: Final[int] = 30
 
     # Premium tier
-    PREMIUM_YOUTUBE_MINUTES: Final[int] = 200
-    PREMIUM_TRANSLATIONS: Final[int] = 100
+    PREMIUM_YOUTUBE_MINUTES: Final[int] = 100
+    PREMIUM_TRANSLATIONS: Final[int] = 50
     PREMIUM_PERIOD_DAYS: Final[int] = 30
-    PREMIUM_PRICE_STARS: Final[int] = 100
+    PREMIUM_PRICE_STARS: Final[int] = 350
 
 
 @dataclass(frozen=True)
