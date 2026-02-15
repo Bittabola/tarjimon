@@ -115,12 +115,12 @@ class APITimeouts:
 class PricingConstants:
     """API pricing constants (USD)."""
 
-    # Gemini 3 Flash pricing per 1M tokens (as of Dec 2025)
+    # Gemini 2.5 Pro pricing per 1M tokens (as of Feb 2026)
     # https://ai.google.dev/gemini-api/docs/pricing
-    GEMINI_INPUT_PRICE_PER_M: Final[float] = 0.50
-    GEMINI_OUTPUT_PRICE_PER_M: Final[float] = 3.00
-    GEMINI_INPUT_PRICE_PER_M_LONG: Final[float] = 1.00  # >200k context
-    GEMINI_OUTPUT_PRICE_PER_M_LONG: Final[float] = 6.00  # >200k context
+    GEMINI_INPUT_PRICE_PER_M: Final[float] = 1.25
+    GEMINI_OUTPUT_PRICE_PER_M: Final[float] = 10.00  # applies to output + thinking tokens
+    GEMINI_INPUT_PRICE_PER_M_LONG: Final[float] = 2.50  # >200k context
+    GEMINI_OUTPUT_PRICE_PER_M_LONG: Final[float] = 20.00  # >200k context
     GEMINI_LONG_CONTEXT_THRESHOLD: Final[int] = 200_000
 
     # Telegram Stars

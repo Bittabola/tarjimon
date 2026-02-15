@@ -312,12 +312,17 @@ def log_token_usage_to_db(
         return None
 
     # Calculate cost in USD
+    # For thinking models (e.g. Gemini 2.5 Pro), total_token_count includes
+    # thinking tokens that are billed at the output rate but not reported in
+    # candidates_token_count. Use (total - input) as the billable output.
     cost_usd = 0.0
+    billable_output_tokens = output_tokens
     if input_tokens > 0 or output_tokens > 0:
+        billable_output_tokens = max(tokens_this_call - input_tokens, output_tokens)
         cost_usd = (
             input_tokens / 1_000_000
         ) * PRICING_CONSTANTS.GEMINI_INPUT_PRICE_PER_M + (
-            output_tokens / 1_000_000
+            billable_output_tokens / 1_000_000
         ) * PRICING_CONSTANTS.GEMINI_OUTPUT_PRICE_PER_M
 
     db_manager = DatabaseManager()
@@ -351,8 +356,9 @@ def log_token_usage_to_db(
             inserted_id = cursor.lastrowid
 
             # conn.commit() is now handled by the context manager
+            thinking_tokens = billable_output_tokens - output_tokens
             logger.info(
-                f"DB_LOG: ID:{inserted_id} Tokens: {tokens_this_call} (in:{input_tokens}/out:{output_tokens}), Cost: ${cost_usd:.6f}, User: {user_id}, Service: {service_name}"
+                f"DB_LOG: ID:{inserted_id} Tokens: {tokens_this_call} (in:{input_tokens}/out:{output_tokens}/thinking:{thinking_tokens}), Cost: ${cost_usd:.6f}, User: {user_id}, Service: {service_name}"
             )
             return inserted_id
     except sqlite3.Error as e:

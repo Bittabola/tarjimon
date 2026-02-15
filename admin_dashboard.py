@@ -720,7 +720,7 @@ async def dashboard_overview(
     </div>
     
     <p class="text-muted">
-        Pricing: Input ${PRICING_CONSTANTS.GEMINI_INPUT_PRICE_PER_M}/M tokens, Output ${PRICING_CONSTANTS.GEMINI_OUTPUT_PRICE_PER_M}/M tokens<br>
+        Pricing: Input ${PRICING_CONSTANTS.GEMINI_INPUT_PRICE_PER_M}/M tokens, Output+Thinking ${PRICING_CONSTANTS.GEMINI_OUTPUT_PRICE_PER_M}/M tokens (Gemini 2.5 Pro)<br>
         Premium P/L = Net Revenue - Premium API Cost | Overall P/L = Net Revenue - Total API Cost
     </p>
     """
