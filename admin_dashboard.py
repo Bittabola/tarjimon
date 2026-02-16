@@ -837,7 +837,7 @@ async def dashboard_requests(
         rows += f"""
         <tr>
             <td class="timestamp-cell">{timestamp}</td>
-            <td>{req["user_id"]}</td>
+            <td>{escape_html(req["user_id"])}</td>
             <td><span class="badge {tier_class}">{escaped_tier}</span></td>
             <td>{escaped_content_type}</td>
             <td>{cost_html}</td>

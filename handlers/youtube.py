@@ -843,7 +843,7 @@ async def summarize_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if has_transcript:
         estimated_tokens = user_manager.estimate_tokens(transcript_text or "") + 4000
     else:
-        estimated_tokens = max(4000, billable_minutes * 1200)
+        estimated_tokens = max(4000, video_duration_minutes * 1200)
 
     budget_ok, budget_error = user_manager.check_token_limits(
         user_id=user_id,
@@ -918,14 +918,7 @@ async def summarize_youtube(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             user_manager.record_token_usage(user_id, token_count)
 
         # Refund reserved quota if summarization failed after reservation.
-        failed_summaries = {
-            S.YOUTUBE_SUMMARY_ERROR,
-            S.YOUTUBE_VIDEO_NOT_FOUND,
-            S.YOUTUBE_PRIVATE_VIDEO,
-            S.YOUTUBE_AGE_RESTRICTED,
-            S.YOUTUBE_VIDEO_TOO_LONG.format(max_minutes=YOUTUBE_LIMITS.MAX_DURATION_MINUTES),
-        }
-        if token_count <= 0 and summary in failed_summaries and reserved_minutes > 0:
+        if token_count <= 0 and reserved_minutes > 0:
             if not increment_youtube_minutes(user_id, reserved_minutes):
                 log_error_with_context(
                     RuntimeError("Could not refund YouTube minutes"),

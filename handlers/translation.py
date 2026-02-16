@@ -464,7 +464,7 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             user_manager.record_token_usage(user_id, token_count)
 
         # If generation failed after quota reservation, refund the credit.
-        if token_count <= 0 and translated_text == S.GENERIC_ERROR:
+        if token_count <= 0 or translated_text == S.GENERIC_ERROR:
             if not increment_translation_limit(user_id):
                 log_error_with_context(
                     RuntimeError("Could not refund translation quota"),
