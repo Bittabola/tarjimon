@@ -5,6 +5,10 @@ from __future__ import annotations
 import io
 import re
 import asyncio
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
@@ -36,6 +40,109 @@ from .common import (
     ensure_free_user_sub,
     split_message,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationDeps:
+    ensure_subscription: Callable[[int], Any]
+    reserve_quota: Callable[[int], bool]
+    refund_quota: Callable[[int, int], bool]
+    translate: Callable[..., Awaitable[tuple[str, int, int, int]]]
+    log_usage: Callable[..., Any]
+    record_session_usage: Callable[[int, int], None]
+    log_error: Callable[..., None]
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationResult:
+    success: bool
+    translated_text: str = ""
+    token_count: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    content_type: str = "text"
+
+
+async def execute_translation(
+    *,
+    user_id: int,
+    text_input: str | None,
+    image_data: bytes | None,
+    image_mime_type: str,
+    is_premium: bool,
+    deps: TranslationDeps,
+) -> TranslationResult:
+    """Pure business logic for translation: reserve, call API, refund on failure, log."""
+    # Determine content type
+    if image_data and text_input:
+        content_type = "image_with_caption"
+    elif image_data:
+        content_type = "image"
+    else:
+        content_type = "text"
+
+    # Ensure free user has subscription record
+    if not is_premium:
+        deps.ensure_subscription(user_id)
+
+    # Reserve one translation credit
+    if not deps.reserve_quota(user_id):
+        return TranslationResult(success=False)
+
+    # Call the translation API
+    try:
+        translated_text, token_count, input_tokens, output_tokens = (
+            await deps.translate(user_id, text_input, image_data, image_mime_type)
+        )
+    except Exception:
+        deps.refund_quota(user_id, 1)
+        raise
+
+    # Refund if generation failed
+    if token_count <= 0 or translated_text == S.GENERIC_ERROR:
+        deps.refund_quota(user_id, 1)
+        return TranslationResult(
+            success=False,
+            translated_text=translated_text,
+            token_count=token_count,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            content_type=content_type,
+        )
+
+    # Log usage on success
+    deps.log_usage(
+        user_id,
+        "gemini",
+        token_count,
+        is_translation=True,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        content_type=content_type,
+        content_preview=text_input[:200] if text_input else None,
+    )
+    deps.record_session_usage(user_id, token_count)
+
+    return TranslationResult(
+        success=True,
+        translated_text=translated_text,
+        token_count=token_count,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        content_type=content_type,
+    )
+
+
+def _default_translation_deps() -> TranslationDeps:
+    return TranslationDeps(
+        ensure_subscription=ensure_free_user_sub,
+        reserve_quota=decrement_translation_limit,
+        refund_quota=increment_translation_limit,
+        translate=_perform_single_model_translation,
+        log_usage=log_token_usage_to_db,
+        record_session_usage=user_manager.record_token_usage,
+        log_error=log_error_with_context,
+    )
 
 
 def _format_translation_output(
@@ -320,7 +427,6 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     text_input = None
     image_data = None
     image_mime_type = "image/jpeg"  # Default for photos
-    reserved_translation = False
 
     try:
         # Update status message to show we're now translating
@@ -412,14 +518,20 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             )
             return
 
-        # Reserve one translation credit before the expensive API call.
-        if not is_premium:
-            ensure_free_user_sub(user_id)
-
-        if not decrement_translation_limit(user_id):
+        # Execute the core translation logic (reserve → translate → refund/log).
+        try:
+            result = await execute_translation(
+                user_id=user_id,
+                text_input=text_input,
+                image_data=image_data,
+                image_mime_type=image_mime_type,
+                is_premium=is_premium,
+                deps=_default_translation_deps(),
+            )
+        except Exception as e:
             log_error_with_context(
-                RuntimeError("Could not reserve translation quota"),
-                context_info={"operation": "translation_quota_reservation"},
+                e,
+                context_info={"operation": "main_translation_handler_single_model"},
                 user_id=user_id,
                 text_preview=text_input,
             )
@@ -427,52 +539,11 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 chat_id=update.effective_chat.id,
                 message_id=status_message.message_id,
                 text=S.GENERIC_ERROR,
+                parse_mode=ParseMode.HTML,
             )
             return
 
-        reserved_translation = True
-
-        (
-            translated_text,
-            token_count,
-            input_tokens,
-            output_tokens,
-        ) = await _perform_single_model_translation(
-            user_id, text_input, image_data, image_mime_type
-        )
-
-        # Determine content type for logging
-        if image_data and text_input:
-            content_type = "image_with_caption"
-        elif image_data:
-            content_type = "image"
-        else:
-            content_type = "text"
-
-        # Log token usage to database and update user session
-        if token_count > 0:
-            log_token_usage_to_db(
-                user_id,
-                "gemini",
-                token_count,
-                is_translation=True,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                content_type=content_type,
-                content_preview=text_input[:200] if text_input else None,
-            )
-            user_manager.record_token_usage(user_id, token_count)
-
-        # If generation failed after quota reservation, refund the credit.
-        if token_count <= 0 or translated_text == S.GENERIC_ERROR:
-            if not increment_translation_limit(user_id):
-                log_error_with_context(
-                    RuntimeError("Could not refund translation quota"),
-                    context_info={"operation": "translation_quota_refund"},
-                    user_id=user_id,
-                    text_preview=text_input,
-                )
-            reserved_translation = False
+        if not result.success:
             await context.bot.edit_message_text(
                 chat_id=update.effective_chat.id,
                 message_id=status_message.message_id,
@@ -482,7 +553,7 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
         # Format output with appropriate title and separate sections
         formatted_output = _format_translation_output(
-            translated_text,
+            result.translated_text,
             has_image=bool(image_data),
             has_caption=bool(text_input and image_data),
         )
@@ -518,14 +589,6 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             )
 
     except Exception as e:
-        if reserved_translation:
-            if not increment_translation_limit(user_id):
-                log_error_with_context(
-                    RuntimeError("Could not refund translation quota after failure"),
-                    context_info={"operation": "translation_quota_refund_exception"},
-                    user_id=user_id,
-                    text_preview=text_input,
-                )
         log_error_with_context(
             e,
             context_info={"operation": "main_translation_handler_single_model"},
