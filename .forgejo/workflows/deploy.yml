@@ -65,18 +65,24 @@ jobs:
         run: |
           REPO_NAME="${GITHUB_REPOSITORY#*/}"
           SHORT_SHA=$(echo "$GITHUB_SHA" | cut -c1-7)
+          TEXT=$(printf '*Deployed* -- `%s` (`sha-%s`)\n[View commit](https://git.fayzullaev.ca/%s/commit/%s)' \
+            "$REPO_NAME" "$SHORT_SHA" "$GITHUB_REPOSITORY" "$GITHUB_SHA")
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d chat_id="${TELEGRAM_CHAT_ID}" \
-            -d parse_mode="Markdown" \
-            -d text="*Deployed* -- \`${REPO_NAME}\` (\`sha-${SHORT_SHA}\`)
-          [View commit](https://git.fayzullaev.ca/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})"
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg chat_id "$TELEGRAM_CHAT_ID" \
+              --arg text "$TEXT" \
+              '{chat_id: $chat_id, text: $text, parse_mode: "Markdown"}')"
 
       - name: Notify deploy failed
         if: failure()
         run: |
           REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          TEXT=$(printf '*Deploy FAILED* -- `%s`\n[View run](https://git.fayzullaev.ca/%s/actions)' \
+            "$REPO_NAME" "$GITHUB_REPOSITORY")
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d chat_id="${TELEGRAM_CHAT_ID}" \
-            -d parse_mode="Markdown" \
-            -d text="*Deploy FAILED* -- \`${REPO_NAME}\`
-          [View run](https://git.fayzullaev.ca/${GITHUB_REPOSITORY}/actions)"
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg chat_id "$TELEGRAM_CHAT_ID" \
+              --arg text "$TEXT" \
+              '{chat_id: $chat_id, text: $text, parse_mode: "Markdown"}')"

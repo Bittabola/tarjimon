@@ -8,6 +8,10 @@ env:
   FORGEJO_URL: ${{ github.server_url }}/api/v1
   REPO: ${{ github.repository }}
 
+concurrency:
+  group: review-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   review:
     runs-on: docker
@@ -100,8 +104,9 @@ jobs:
         shell: bash
         run: |
           REVIEW_SCHEMA='{"type":"object","properties":{"verdict":{"type":"string","enum":["APPROVED","CHANGES_REQUESTED"]},"summary":{"type":"string"},"issues":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["critical","warning","suggestion"]},"file":{"type":"string"},"description":{"type":"string"}},"required":["severity","description"]}}},"required":["verdict","summary","issues"]}'
-          DIFF=$(cat /tmp/diff.txt)
-          REVIEW_PROMPT="You are a senior code reviewer. Review the following git diff for a Python/FastAPI Telegram bot application (translation and YouTube summary service).
+
+          cat > /tmp/review_prompt.txt <<'PROMPT_END'
+          You are a senior code reviewer. Review the following git diff for a Python/FastAPI Telegram bot application (translation and YouTube summary service).
 
           Focus on:
           - Bugs, logic errors, security issues (critical)
@@ -112,8 +117,9 @@ jobs:
           If the diff is clean, approve it.
 
           Here is the diff:
-
-          ${DIFF}"
+          PROMPT_END
+          cat /tmp/diff.txt >> /tmp/review_prompt.txt
+          chown reviewer:reviewer /tmp/review_prompt.txt
 
           RESULT=$(runuser -u reviewer -- claude -p \
             --model opus \
@@ -123,7 +129,7 @@ jobs:
             --allowedTools "Read,Grep,Glob" \
             --dangerously-skip-permissions \
             --no-session-persistence \
-            "$REVIEW_PROMPT")
+            - < /tmp/review_prompt.txt)
 
           STRUCTURED=$(echo "$RESULT" | jq -r '.structured_output // empty')
           if [ -z "$STRUCTURED" ] || [ "$STRUCTURED" = "null" ]; then
