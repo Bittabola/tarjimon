@@ -42,6 +42,15 @@ from .common import (
     split_message,
 )
 
+# Error strings that indicate a failed translation (used to trigger quota refund).
+_TRANSLATION_ERROR_STRINGS: frozenset[str] = frozenset({
+    S.GENERIC_ERROR,
+    S.ERROR_MODEL_OVERLOADED,
+    S.ERROR_TIMED_OUT,
+    S.ERROR_SERVICE_UNAVAILABLE,
+    S.ERROR_CLIENT_REQUEST,
+})
+
 
 @dataclass(frozen=True, slots=True)
 class TranslationDeps:
@@ -100,8 +109,7 @@ async def execute_translation(
         raise
 
     # Refund if generation failed
-    _error_strings = {S.GENERIC_ERROR, S.ERROR_MODEL_OVERLOADED, S.ERROR_TIMED_OUT, S.ERROR_SERVICE_UNAVAILABLE}
-    if token_count <= 0 or translated_text in _error_strings:
+    if token_count <= 0 or translated_text in _TRANSLATION_ERROR_STRINGS:
         deps.refund_quota(user_id, 1)
         return TranslationResult(
             success=False,
@@ -303,14 +311,19 @@ async def _perform_single_model_translation(
         )
     content.append(prompt_with_text)
 
+    # Map transient exception types to their final user-facing error message.
+    _retryable_errors: dict[type, str] = {
+        TimeoutError: S.ERROR_TIMED_OUT,
+        genai_errors.ServerError: S.ERROR_MODEL_OVERLOADED,
+    }
+
     last_exception = None
     delay = RETRY_CONSTANTS.INITIAL_DELAY_SECONDS
 
     for attempt in range(1, RETRY_CONSTANTS.MAX_ATTEMPTS + 1):
         try:
             response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    get_gemini_client().models.generate_content,
+                get_gemini_client().aio.models.generate_content(
                     model=GEMINI_MODEL_NAME,
                     contents=content,
                 ),
@@ -333,26 +346,11 @@ async def _perform_single_model_translation(
 
             return response.text.strip(), token_count, input_tokens, output_tokens
 
-        except TimeoutError:
-            last_exception = TimeoutError("Gemini API call timed out")
-            logger.warning(
-                f"Translation attempt {attempt}/{RETRY_CONSTANTS.MAX_ATTEMPTS} timed out for user {user_id}"
-            )
-            if attempt < RETRY_CONSTANTS.MAX_ATTEMPTS:
-                await asyncio.sleep(delay)
-                delay = min(delay * RETRY_CONSTANTS.BACKOFF_MULTIPLIER, RETRY_CONSTANTS.MAX_DELAY_SECONDS)
-                continue
-            log_error_with_context(
-                last_exception,
-                context_info={"operation": "single_model_translation", "attempts": attempt},
-                user_id=user_id,
-            )
-            return S.ERROR_TIMED_OUT, 0, 0, 0
-
-        except genai_errors.ServerError as e:
+        except (TimeoutError, genai_errors.ServerError) as e:
             last_exception = e
             logger.warning(
-                f"Translation attempt {attempt}/{RETRY_CONSTANTS.MAX_ATTEMPTS} got ServerError for user {user_id}: {e}"
+                f"Translation attempt {attempt}/{RETRY_CONSTANTS.MAX_ATTEMPTS} "
+                f"failed ({type(e).__name__}) for user {user_id}: {e}"
             )
             if attempt < RETRY_CONSTANTS.MAX_ATTEMPTS:
                 await asyncio.sleep(delay)
@@ -363,7 +361,7 @@ async def _perform_single_model_translation(
                 context_info={"operation": "single_model_translation", "attempts": attempt},
                 user_id=user_id,
             )
-            return S.ERROR_MODEL_OVERLOADED, 0, 0, 0
+            return _retryable_errors.get(type(e), S.GENERIC_ERROR), 0, 0, 0
 
         except genai_errors.ClientError as e:
             # Client errors (400) are not retryable — bad API key, invalid input, etc.
@@ -372,7 +370,7 @@ async def _perform_single_model_translation(
                 context_info={"operation": "single_model_translation"},
                 user_id=user_id,
             )
-            return S.ERROR_SERVICE_UNAVAILABLE, 0, 0, 0
+            return S.ERROR_CLIENT_REQUEST, 0, 0, 0
 
         except Exception as e:
             log_error_with_context(

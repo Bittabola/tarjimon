@@ -212,6 +212,10 @@ ERROR_SERVICE_UNAVAILABLE: Final[str] = (
     "Xizmat vaqtincha mavjud emas. Iltimos, keyinroq qayta urinib ko'ring."
 )
 
+ERROR_CLIENT_REQUEST: Final[str] = (
+    "So'rovni qayta ishlashda xatolik yuz berdi. Iltimos, keyinroq qayta urinib ko'ring."
+)
+
 PROCESSING: Final[str] = "Xabar qabul qilindi. Tekshirilmoqda..."
 
 TRANSLATING: Final[str] = "Tarjima qilinmoqda..."
