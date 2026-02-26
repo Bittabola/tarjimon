@@ -45,9 +45,17 @@ _genai_types_mod = _ensure_stub("google.genai.types", {
     "FileData": MagicMock(),
     "GenerateContentConfig": MagicMock(),
 })
+# Stub google.genai.errors with real exception classes for `except` clauses
+_api_error = type("APIError", (Exception,), {"code": 0, "status": "", "message": ""})
+_genai_errors_mod = _ensure_stub("google.genai.errors", {
+    "APIError": _api_error,
+    "ClientError": type("ClientError", (_api_error,), {}),
+    "ServerError": type("ServerError", (_api_error,), {}),
+})
 # Make `from google import genai` work
 sys.modules["google"].genai = sys.modules["google.genai"]
 sys.modules["google.genai"].types = _genai_types_mod
+sys.modules["google.genai"].errors = _genai_errors_mod
 
 # httpx
 _ensure_stub("httpx", {

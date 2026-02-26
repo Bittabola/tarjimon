@@ -200,6 +200,18 @@ ACTIVATION_ERROR: Final[str] = (
 
 GENERIC_ERROR: Final[str] = "Xatolik yuz berdi."
 
+ERROR_MODEL_OVERLOADED: Final[str] = (
+    "Hozirda serverda yuklanish yuqori. Iltimos, bir necha daqiqadan keyin qayta urinib ko'ring."
+)
+
+ERROR_TIMED_OUT: Final[str] = (
+    "So'rov vaqti tugadi. Iltimos, qayta urinib ko'ring yoki qisqaroq matn yuboring."
+)
+
+ERROR_SERVICE_UNAVAILABLE: Final[str] = (
+    "Xizmat vaqtincha mavjud emas. Iltimos, keyinroq qayta urinib ko'ring."
+)
+
 PROCESSING: Final[str] = "Xabar qabul qilindi. Tekshirilmoqda..."
 
 TRANSLATING: Final[str] = "Tarjima qilinmoqda..."
