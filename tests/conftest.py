@@ -57,17 +57,25 @@ sys.modules["google"].genai = sys.modules["google.genai"]
 sys.modules["google.genai"].types = _genai_types_mod
 sys.modules["google.genai"].errors = _genai_errors_mod
 
-# httpx
-_ensure_stub("httpx", {
-    "AsyncClient": MagicMock(),
-    "TimeoutException": type("TimeoutException", (Exception,), {}),
-    "ConnectError": type("ConnectError", (Exception,), {}),
-    "HTTPError": type("HTTPError", (Exception,), {}),
-})
+# httpx — use the real package when installed (needed for integration tests
+# that use ASGITransport); fall back to a stub only when it is missing.
+try:
+    import httpx as _httpx_real  # noqa: F401 — force into sys.modules
+except ImportError:
+    _ensure_stub("httpx", {
+        "AsyncClient": MagicMock(),
+        "ASGITransport": MagicMock(),
+        "TimeoutException": type("TimeoutException", (Exception,), {}),
+        "ConnectError": type("ConnectError", (Exception,), {}),
+        "HTTPError": type("HTTPError", (Exception,), {}),
+    })
 
 # PIL / Pillow (imported by some modules)
 _ensure_stub("PIL", {})
 _ensure_stub("PIL.Image", {"open": MagicMock()})
+
+# uvicorn (only needed at runtime, not during tests)
+_ensure_stub("uvicorn", {"run": MagicMock()})
 
 # ---------------------------------------------------------------------------
 # Ensure project root is on sys.path

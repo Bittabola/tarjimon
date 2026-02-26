@@ -1,0 +1,6 @@
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "smoke: tests that hit real external APIs (deselect with '-m not smoke')",
+]
+testpaths = ["tests"]
