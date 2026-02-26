@@ -103,8 +103,14 @@ def tmp_db(tmp_path, monkeypatch):
 
     yield tmp_path / "test.db"
 
-    # Cleanup: reset the singleton so subsequent tests start fresh
+    # Reset the singleton so subsequent tests start fresh.
+    # DatabaseManager uses per-call connections (via context manager) so there
+    # is no persistent connection to close, but we clear the initialized flag
+    # to ensure the next instantiation re-runs __init__.
+    instance = database.DatabaseManager._instance
     database.DatabaseManager._instance = None
+    if instance is not None:
+        instance.initialized = False
 
 
 # ---------------------------------------------------------------------------

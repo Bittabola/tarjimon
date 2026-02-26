@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 import database
 from handlers import feedback
 from handlers.feedback import (
@@ -28,7 +26,6 @@ from tests.integration.helpers import make_command_update, make_text_update
 # ------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_aloqa_command_enters_feedback_mode(tmp_db, monkeypatch):
     """/aloqa with valid config adds user to pending set and replies."""
     user_id = 500
@@ -48,7 +45,6 @@ async def test_aloqa_command_enters_feedback_mode(tmp_db, monkeypatch):
 # ------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_aloqa_disabled_when_not_configured(tmp_db, monkeypatch):
     """/aloqa with missing config does NOT enter feedback mode."""
     user_id = 501
@@ -69,7 +65,6 @@ async def test_aloqa_disabled_when_not_configured(tmp_db, monkeypatch):
 # ------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 async def test_feedback_message_saved_to_db(tmp_db, monkeypatch):
     """Pending user's text message is saved to DB and handler returns True."""
     user_id = 502

@@ -8,32 +8,10 @@ Tests:
 
 from __future__ import annotations
 
-import importlib
-import sys
 from unittest.mock import patch
 
+import httpx
 import pytest
-
-
-def _get_real_httpx():
-    """Import the real httpx module, bypassing the test stub.
-
-    The root ``tests/conftest.py`` replaces ``httpx`` in ``sys.modules`` with a
-    stub module.  We need the real ``httpx`` (with ``ASGITransport`` and
-    ``AsyncClient``) to build an ASGI test client for FastAPI.
-    """
-    stub = sys.modules.pop("httpx", None)
-    try:
-        real = importlib.import_module("httpx")
-    finally:
-        # Restore the stub so application code that imports httpx still gets
-        # the mock (avoiding real network calls).
-        if stub is not None:
-            sys.modules["httpx"] = stub
-    return real
-
-
-_real_httpx = _get_real_httpx()
 
 
 @pytest.fixture()
@@ -46,8 +24,8 @@ async def client(tmp_db):
     """
     from webhook import app
 
-    transport = _real_httpx.ASGITransport(app=app, raise_app_exceptions=False)
-    async with _real_httpx.AsyncClient(
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as c:
         yield c
