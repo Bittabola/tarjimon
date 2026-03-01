@@ -17,7 +17,6 @@ This guide covers deploying the Tarjimon Telegram bot to a VPS using Docker.
 | `GEMINI_MODEL_NAME` | Yes | Gemini model (e.g., `gemini-2.0-flash`) |
 | `WEBHOOK_URL` | Yes | Public URL for webhook (e.g., `https://example.com/webhook`) |
 | `WEBHOOK_SECRET` | Yes | Random secret string for webhook validation |
-| `SUPADATA_API_KEY` | No | Supadata API key for YouTube transcripts |
 | `ADMIN_USERNAME` | No | Admin dashboard username (default: `admin`) |
 | `ADMIN_PASSWORD` | No | Admin dashboard password (required to access `/admin`) |
 | `FEEDBACK_BOT_TOKEN` | No | Separate bot token for feedback feature (from @BotFather) |
@@ -54,7 +53,6 @@ GEMINI_API_KEY=your_gemini_api_key
 GEMINI_MODEL_NAME=gemini-2.0-flash
 WEBHOOK_URL=https://your-domain.com/webhook
 WEBHOOK_SECRET=your_random_secret_string
-SUPADATA_API_KEY=your_supadata_api_key
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=your_admin_password
 TARJIMON_DB_PATH=/app/data/sqlite_data

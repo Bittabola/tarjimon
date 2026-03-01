@@ -1,20 +1,11 @@
 """Utility functions for the Tarjimon bot.
 
 This module provides common utility functions used across the application,
-including HTML escaping, input validation, and retry decorators.
+including HTML escaping and input validation.
 """
 
 import html
-import functools
-import asyncio
-from collections.abc import Callable
-from typing import TypeVar, ParamSpec
-from config import logger
 import strings as S
-
-# Type variables for generic retry decorator
-P = ParamSpec("P")
-T = TypeVar("T")
 
 
 def safe_html(text: str, max_length: int | None = None) -> str:
@@ -108,139 +99,6 @@ def truncate_text(text: str, max_length: int, suffix: str = "...") -> str:
         return text
 
     return text[: max_length - len(suffix)] + suffix
-
-
-def retry_async(
-    max_attempts: int = 3,
-    delay_seconds: float = 1.0,
-    backoff_multiplier: float = 2.0,
-    max_delay_seconds: float = 30.0,
-    exceptions: tuple = (Exception,),
-    on_retry: Callable[[Exception, int], None] | None = None,
-) -> Callable[[Callable[P, T]], Callable[P, T]]:
-    """
-    Decorator for retrying async functions with exponential backoff.
-
-    Args:
-        max_attempts: Maximum number of retry attempts
-        delay_seconds: Initial delay between retries
-        backoff_multiplier: Multiplier for delay after each retry
-        max_delay_seconds: Maximum delay between retries
-        exceptions: Tuple of exception types to catch and retry
-        on_retry: Optional callback function called on each retry
-
-    Returns:
-        Decorated function with retry logic
-
-    Example:
-        @retry_async(max_attempts=3, delay_seconds=1.0)
-        async def call_api():
-            return await some_api_call()
-    """
-
-    def decorator(func: Callable[P, T]) -> Callable[P, T]:
-        @functools.wraps(func)
-        async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
-            last_exception = None
-            current_delay = delay_seconds
-
-            for attempt in range(1, max_attempts + 1):
-                try:
-                    return await func(*args, **kwargs)
-                except exceptions as e:
-                    last_exception = e
-
-                    if attempt == max_attempts:
-                        logger.error(
-                            f"Function {func.__name__} failed after {max_attempts} attempts: {e}"
-                        )
-                        raise
-
-                    if on_retry:
-                        on_retry(e, attempt)
-
-                    logger.warning(
-                        f"Function {func.__name__} attempt {attempt}/{max_attempts} failed: {e}. "
-                        f"Retrying in {current_delay:.1f}s..."
-                    )
-
-                    await asyncio.sleep(current_delay)
-                    current_delay = min(
-                        current_delay * backoff_multiplier, max_delay_seconds
-                    )
-
-            # This should never be reached, but just in case
-            if last_exception:
-                raise last_exception
-            raise RuntimeError(f"Unexpected state in retry logic for {func.__name__}")
-
-        return wrapper
-
-    return decorator
-
-
-def retry_sync(
-    max_attempts: int = 3,
-    delay_seconds: float = 1.0,
-    backoff_multiplier: float = 2.0,
-    max_delay_seconds: float = 30.0,
-    exceptions: tuple = (Exception,),
-    on_retry: Callable[[Exception, int], None] | None = None,
-) -> Callable[[Callable[P, T]], Callable[P, T]]:
-    """
-    Decorator for retrying synchronous functions with exponential backoff.
-
-    Args:
-        max_attempts: Maximum number of retry attempts
-        delay_seconds: Initial delay between retries
-        backoff_multiplier: Multiplier for delay after each retry
-        max_delay_seconds: Maximum delay between retries
-        exceptions: Tuple of exception types to catch and retry
-        on_retry: Optional callback function called on each retry
-
-    Returns:
-        Decorated function with retry logic
-    """
-    import time
-
-    def decorator(func: Callable[P, T]) -> Callable[P, T]:
-        @functools.wraps(func)
-        def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
-            last_exception = None
-            current_delay = delay_seconds
-
-            for attempt in range(1, max_attempts + 1):
-                try:
-                    return func(*args, **kwargs)
-                except exceptions as e:
-                    last_exception = e
-
-                    if attempt == max_attempts:
-                        logger.error(
-                            f"Function {func.__name__} failed after {max_attempts} attempts: {e}"
-                        )
-                        raise
-
-                    if on_retry:
-                        on_retry(e, attempt)
-
-                    logger.warning(
-                        f"Function {func.__name__} attempt {attempt}/{max_attempts} failed: {e}. "
-                        f"Retrying in {current_delay:.1f}s..."
-                    )
-
-                    time.sleep(current_delay)
-                    current_delay = min(
-                        current_delay * backoff_multiplier, max_delay_seconds
-                    )
-
-            if last_exception:
-                raise last_exception
-            raise RuntimeError(f"Unexpected state in retry logic for {func.__name__}")
-
-        return wrapper
-
-    return decorator
 
 
 def format_number(number: int | float, decimal_places: int = 0) -> str:

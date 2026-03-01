@@ -1,6 +1,6 @@
 # Tarjimon Bot
 
-A Telegram bot that translates messages into Uzbek and summarizes YouTube videos using Google Gemini AI.
+A Telegram bot that translates text and images into Uzbek using Google Gemini AI.
 
 [![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12+-green.svg)](https://www.python.org/)
@@ -10,7 +10,6 @@ A Telegram bot that translates messages into Uzbek and summarizes YouTube videos
 
 - **Text Translation** — Translates text messages from any language to Uzbek using Google Gemini
 - **Image Translation (OCR)** — Extracts text from images and translates in a single API call
-- **YouTube Summarization** — Summarizes YouTube videos in Uzbek with interactive follow-up Q&A
 - **Forwarded Messages** — Translate forwarded messages from other chats
 - **Subscription System** — Free tier with limits + premium subscriptions via Telegram Stars
 - **Admin Dashboard** — Web dashboard at `/admin` for monitoring usage, costs, and statistics
@@ -23,7 +22,6 @@ The bot uses Google Gemini's multimodal capabilities to:
 
 1. **Translation**: Detect source language → Translate to Uzbek (skipped if already Uzbek)
 2. **Image OCR**: Extract text from images → Detect language → Translate
-3. **YouTube**: Fetch transcript via Supadata API → Generate Uzbek summary with follow-up questions
 
 All processing happens in minimal API calls for speed and cost efficiency.
 
@@ -67,7 +65,6 @@ Copy `.env.example` to `.env` and configure:
 | `GEMINI_MODEL_NAME` | Yes | Model name (e.g., `gemini-2.0-flash`) |
 | `WEBHOOK_URL` | Yes | Public webhook URL (e.g., `https://example.com/webhook`) |
 | `WEBHOOK_SECRET` | Yes | Random secret for webhook validation |
-| `SUPADATA_API_KEY` | No | [Supadata](https://supadata.ai/) API key for YouTube transcripts |
 | `ADMIN_USERNAME` | No | Admin dashboard username (default: `admin`) |
 | `ADMIN_PASSWORD` | No | Admin dashboard password |
 | `TARJIMON_DB_PATH` | No | Database directory (default: `data/sqlite_data`) |
@@ -111,12 +108,10 @@ Set `WEBHOOK_URL` to the ngrok URL, then run `python webhook.py`.
 ## Usage Limits
 
 ### Free Tier (resets every 30 days)
-- 10 YouTube video minutes
 - 10 translations
 - 20,000 tokens per day
 
 ### Premium Tier (350 Telegram Stars)
-- 100 YouTube video minutes
 - 50 translations
 - 30-day subscription period
 
@@ -139,7 +134,6 @@ tarjimon/
 │   ├── __init__.py      # Re-exports all handlers
 │   ├── common.py        # Shared utilities (Gemini client, helpers)
 │   ├── translation.py   # Text and image translation
-│   ├── youtube.py       # YouTube summarization
 │   ├── subscription.py  # Payments and subscriptions
 │   └── feedback.py      # User feedback system
 ├── config.py            # Configuration and environment loading
@@ -150,9 +144,7 @@ tarjimon/
 ├── utils.py             # General utilities
 ├── admin_dashboard.py   # FastAPI admin routes
 ├── prompts/             # Gemini prompt templates
-│   ├── translation.md
-│   ├── youtube_summary.md
-│   └── youtube_followup.md
+│   └── translation.md
 └── data/sqlite_data/    # Database files (gitignored)
 ```
 
@@ -208,4 +200,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - [Google Gemini](https://ai.google.dev/) for AI capabilities
 - [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot) for the excellent bot framework
-- [Supadata](https://supadata.ai/) for YouTube transcript API

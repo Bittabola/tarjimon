@@ -101,8 +101,7 @@ def init_db():
                 output_tokens INTEGER DEFAULT 0,
                 cost_usd REAL DEFAULT 0.0,
                 content_type TEXT DEFAULT NULL,
-                content_preview TEXT DEFAULT NULL,
-                parent_request_id INTEGER DEFAULT NULL
+                content_preview TEXT DEFAULT NULL
             )
             """)
 
@@ -237,10 +236,6 @@ def init_db():
                     "content_preview",
                     "ALTER TABLE api_token_usage ADD COLUMN content_preview TEXT DEFAULT NULL",
                 ),
-                (
-                    "parent_request_id",
-                    "ALTER TABLE api_token_usage ADD COLUMN parent_request_id INTEGER DEFAULT NULL",
-                ),
             ]:
                 try:
                     cursor.execute(sql)
@@ -266,7 +261,6 @@ def log_token_usage_to_db(
     output_tokens: int = 0,
     content_type: str | None = None,
     content_preview: str | None = None,
-    parent_request_id: int | None = None,
 ) -> int | None:
     """Log token usage to SQLite database with improved error handling and cost tracking.
 
@@ -279,7 +273,6 @@ def log_token_usage_to_db(
         output_tokens: Number of output tokens (for cost calculation)
         content_type: Type of content (text, image, etc.)
         content_preview: Preview of content (truncated)
-        parent_request_id: ID of parent request
 
     Returns:
         The inserted row ID, or None if logging failed
@@ -310,8 +303,8 @@ def log_token_usage_to_db(
 
             cursor.execute(
                 """
-            INSERT INTO api_token_usage (timestamp_utc, user_id, service_name, token_count, is_translation_related, input_tokens, output_tokens, cost_usd, content_type, content_preview, parent_request_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO api_token_usage (timestamp_utc, user_id, service_name, token_count, is_translation_related, input_tokens, output_tokens, cost_usd, content_type, content_preview)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     timestamp_utc,
@@ -324,7 +317,6 @@ def log_token_usage_to_db(
                     cost_usd,
                     content_type,
                     content_preview[:500] if content_preview else None,
-                    parent_request_id,
                 ),
             )
 
