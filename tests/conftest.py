@@ -44,6 +44,7 @@ _genai_types_mod = _ensure_stub("google.genai.types", {
     "Content": MagicMock(),
     "FileData": MagicMock(),
     "GenerateContentConfig": MagicMock(),
+    "ThinkingConfig": MagicMock(),
 })
 # Stub google.genai.errors with real exception classes for `except` clauses
 _api_error = type("APIError", (Exception,), {"code": 0, "status": "", "message": ""})

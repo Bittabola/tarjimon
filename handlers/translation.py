@@ -59,6 +59,11 @@ _RETRYABLE_ERRORS: dict[type, str] = {
     genai_errors.ServerError: S.ERROR_MODEL_OVERLOADED,
 }
 
+# Minimize thinking tokens for faster time-to-first-token.
+_GENERATION_CONFIG = types.GenerateContentConfig(
+    thinking_config=types.ThinkingConfig(thinking_level="minimal"),
+)
+
 
 @dataclass(frozen=True, slots=True)
 class TranslationDeps:
@@ -330,6 +335,7 @@ async def _perform_single_model_translation(
                 get_gemini_client().aio.models.generate_content(
                     model=GEMINI_MODEL_NAME,
                     contents=content,
+                    config=_GENERATION_CONFIG,
                 ),
                 timeout=API_TIMEOUTS.GEMINI_DEFAULT,
             )
@@ -459,6 +465,7 @@ async def _perform_streaming_translation(
                 stream = await get_gemini_client().aio.models.generate_content_stream(
                     model=GEMINI_MODEL_NAME,
                     contents=content,
+                    config=_GENERATION_CONFIG,
                 )
 
                 async for chunk in stream:
