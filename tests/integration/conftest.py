@@ -75,7 +75,7 @@ def make_gemini_response(
     return response
 
 
-async def _fake_stream_iterator(chunks):
+async def fake_stream_iterator(chunks):
     """Yield chunks as an async iterator for generate_content_stream mock."""
     for chunk in chunks:
         yield chunk
@@ -179,7 +179,7 @@ def patch_gemini():
     default_chunks = make_gemini_stream_chunks()
 
     async def _default_stream(*args, **kwargs):
-        return _fake_stream_iterator(default_chunks)
+        return fake_stream_iterator(default_chunks)
 
     mock_client.aio.models.generate_content_stream = AsyncMock(
         side_effect=_default_stream,

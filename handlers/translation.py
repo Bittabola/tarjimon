@@ -52,6 +52,13 @@ _TRANSLATION_ERROR_STRINGS: frozenset[str] = frozenset({
     S.ERROR_CLIENT_REQUEST,
 })
 
+# Map transient exception types to their final user-facing error message.
+# Shared by _perform_single_model_translation and _perform_streaming_translation.
+_RETRYABLE_ERRORS: dict[type, str] = {
+    TimeoutError: S.ERROR_TIMED_OUT,
+    genai_errors.ServerError: S.ERROR_MODEL_OVERLOADED,
+}
+
 
 @dataclass(frozen=True, slots=True)
 class TranslationDeps:
@@ -312,11 +319,7 @@ async def _perform_single_model_translation(
         )
     content.append(prompt_with_text)
 
-    # Map transient exception types to their final user-facing error message.
-    _retryable_errors: dict[type, str] = {
-        TimeoutError: S.ERROR_TIMED_OUT,
-        genai_errors.ServerError: S.ERROR_MODEL_OVERLOADED,
-    }
+    _retryable_errors = _RETRYABLE_ERRORS
 
     last_exception = None
     delay = RETRY_CONSTANTS.INITIAL_DELAY_SECONDS
@@ -432,10 +435,7 @@ async def _perform_streaming_translation(
         )
     content.append(prompt_with_text)
 
-    _retryable_errors: dict[type, str] = {
-        TimeoutError: S.ERROR_TIMED_OUT,
-        genai_errors.ServerError: S.ERROR_MODEL_OVERLOADED,
-    }
+    _retryable_errors = _RETRYABLE_ERRORS
 
     last_exception = None
     delay = RETRY_CONSTANTS.INITIAL_DELAY_SECONDS

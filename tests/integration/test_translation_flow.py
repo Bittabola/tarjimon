@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import database
 from handlers.translation import translate_message
-from tests.integration.conftest import make_gemini_response, make_gemini_stream_chunks, _fake_stream_iterator
+from tests.integration.conftest import make_gemini_response, make_gemini_stream_chunks, fake_stream_iterator
 from tests.integration.helpers import make_text_update, make_photo_update
 
 
@@ -36,7 +36,7 @@ def _set_streaming_response(patch_gemini, text, total_tokens, input_tokens, outp
     )
 
     async def stream_effect(*a, **kw):
-        return _fake_stream_iterator(chunks)
+        return fake_stream_iterator(chunks)
 
     patch_gemini.aio.models.generate_content_stream.side_effect = stream_effect
     patch_gemini.aio.models.generate_content.return_value = make_gemini_response(
@@ -304,7 +304,7 @@ async def test_text_translation_uses_streaming(tmp_db, patch_gemini):
     )
 
     async def stream_effect(*a, **kw):
-        return _fake_stream_iterator(chunks)
+        return fake_stream_iterator(chunks)
 
     patch_gemini.aio.models.generate_content_stream.side_effect = stream_effect
 
@@ -386,7 +386,7 @@ async def test_streaming_chunk_valueerror_skipped(tmp_db, patch_gemini):
     bad_chunk.usage_metadata = None
 
     async def stream_effect(*a, **kw):
-        return _fake_stream_iterator([bad_chunk, good_chunk])
+        return fake_stream_iterator([bad_chunk, good_chunk])
 
     patch_gemini.aio.models.generate_content_stream.side_effect = stream_effect
 
@@ -411,7 +411,7 @@ async def test_streaming_stops_edits_on_deleted_message(tmp_db, patch_gemini):
     )
 
     async def stream_effect(*a, **kw):
-        return _fake_stream_iterator(chunks)
+        return fake_stream_iterator(chunks)
 
     patch_gemini.aio.models.generate_content_stream.side_effect = stream_effect
 
@@ -448,7 +448,7 @@ async def test_streaming_estimates_tokens_when_metadata_missing(tmp_db, patch_ge
     chunk.usage_metadata = None
 
     async def stream_effect(*a, **kw):
-        return _fake_stream_iterator([chunk])
+        return fake_stream_iterator([chunk])
 
     patch_gemini.aio.models.generate_content_stream.side_effect = stream_effect
 
