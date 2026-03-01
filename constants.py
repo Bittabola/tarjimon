@@ -141,6 +141,17 @@ class TelegramConstants:
     MAX_BUTTON_TEXT_LENGTH: Final[int] = 64
 
 
+@dataclass(frozen=True)
+class StreamingConstants:
+    """Streaming response display constants."""
+
+    EDIT_INTERVAL_SECONDS: Final[float] = 1.5
+    CURSOR_INDICATOR: Final[str] = "\u258c"
+    MIN_CHARS_FOR_UPDATE: Final[int] = 20
+    MAX_STREAMING_EDITS: Final[int] = 20
+    STREAM_ITERATION_TIMEOUT: Final[int] = 150  # seconds; > GEMINI_DEFAULT to cover slow streams
+
+
 # Export all constant classes as singletons
 RATE_LIMITS = RateLimits()
 TEXT_LIMITS = TextLimits()
@@ -153,6 +164,7 @@ PRICING_CONSTANTS = PricingConstants()
 ERROR_LOG_CONSTANTS = ErrorLogConstants()
 DATABASE_CONSTANTS = DatabaseConstants()
 TELEGRAM_CONSTANTS = TelegramConstants()
+STREAMING_CONSTANTS = StreamingConstants()
 
 
 # Supported image formats

@@ -75,6 +75,46 @@ def make_gemini_response(
     return response
 
 
+async def _fake_stream_iterator(chunks):
+    """Yield chunks as an async iterator for generate_content_stream mock."""
+    for chunk in chunks:
+        yield chunk
+
+
+def make_gemini_stream_chunks(
+    text="Translated text",
+    total_tokens=100,
+    input_tokens=50,
+    output_tokens=50,
+    num_chunks=3,
+):
+    """Build mock chunks simulating a streaming response.
+
+    Only the last chunk contains usage_metadata with cumulative token counts.
+    """
+    chunk_size = max(1, len(text) // num_chunks)
+    text_parts = []
+    for i in range(num_chunks):
+        start = i * chunk_size
+        if i == num_chunks - 1:
+            text_parts.append(text[start:])
+        else:
+            text_parts.append(text[start : start + chunk_size])
+
+    chunks = []
+    for i, part in enumerate(text_parts):
+        chunk = MagicMock()
+        chunk.text = part
+        if i == len(text_parts) - 1:
+            chunk.usage_metadata.total_token_count = total_tokens
+            chunk.usage_metadata.prompt_token_count = input_tokens
+            chunk.usage_metadata.candidates_token_count = output_tokens
+        else:
+            chunk.usage_metadata = None
+        chunks.append(chunk)
+    return chunks
+
+
 # ---------------------------------------------------------------------------
 # Fixture: temporary database
 # ---------------------------------------------------------------------------
@@ -134,6 +174,15 @@ def patch_gemini():
     mock_client = MagicMock()
     mock_client.aio.models.generate_content = AsyncMock(
         return_value=make_gemini_response(),
+    )
+
+    default_chunks = make_gemini_stream_chunks()
+
+    async def _default_stream(*args, **kwargs):
+        return _fake_stream_iterator(default_chunks)
+
+    mock_client.aio.models.generate_content_stream = AsyncMock(
+        side_effect=_default_stream,
     )
 
     with (

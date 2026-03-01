@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import re
+import time
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -19,7 +20,7 @@ from config import (
     SUBSCRIPTION_PLAN,
     PROMPTS,
 )
-from constants import IMAGE_LIMITS, SUBSCRIPTION_LIMITS, RETRY_CONSTANTS, API_TIMEOUTS
+from constants import IMAGE_LIMITS, SUBSCRIPTION_LIMITS, RETRY_CONSTANTS, API_TIMEOUTS, STREAMING_CONSTANTS
 from google.genai import errors as genai_errors
 from database import (
     log_token_usage_to_db,
@@ -389,6 +390,234 @@ async def _perform_single_model_translation(
     return S.GENERIC_ERROR, 0, 0, 0
 
 
+async def _perform_streaming_translation(
+    user_id: int,
+    text_input: str | None = None,
+    image_data: bytes | None = None,
+    mime_type: str = "image/jpeg",
+    on_chunk: Callable[[str], Awaitable[None]] | None = None,
+) -> tuple[str, int, int, int]:
+    """Perform translation using Gemini streaming API.
+
+    Mirrors _perform_single_model_translation but streams chunks and calls
+    on_chunk with accumulated text for progressive Telegram message edits.
+
+    Resilience features:
+    - Full stream iteration is wrapped in a timeout (not just the connection).
+    - chunk.text access is guarded against ValueError (safety blocks, empty parts).
+    - Streaming edits are capped at MAX_STREAMING_EDITS to avoid Telegram throttling.
+    - On retry, streaming edits are disabled to avoid text disappearing/restarting.
+    - If stream succeeds but usage_metadata is missing, tokens are estimated from text.
+    - After all streaming retries fail, falls back to non-streaming API as last resort.
+    """
+    # Build prompt -- same logic as non-streaming
+    if image_data and text_input:
+        system_prompt = PROMPTS["translation"]["text_with_image"]
+    elif image_data:
+        system_prompt = PROMPTS["translation"]["image_only"]
+    else:
+        system_prompt = PROMPTS["translation"]["text_only"]
+
+    content = []
+    if image_data:
+        image_part = types.Part.from_bytes(data=image_data, mime_type=mime_type)
+        content.append(image_part)
+
+    prompt_with_text = system_prompt
+    if text_input:
+        prompt_with_text += f'\n\nHere is the text input to use: """{text_input}"""'
+    else:
+        prompt_with_text += (
+            "\n\nThere is no separate text input, process the image only."
+        )
+    content.append(prompt_with_text)
+
+    _retryable_errors: dict[type, str] = {
+        TimeoutError: S.ERROR_TIMED_OUT,
+        genai_errors.ServerError: S.ERROR_MODEL_OVERLOADED,
+    }
+
+    last_exception = None
+    delay = RETRY_CONSTANTS.INITIAL_DELAY_SECONDS
+
+    for attempt in range(1, RETRY_CONSTANTS.MAX_ATTEMPTS + 1):
+        try:
+            accumulated_text = ""
+            token_count = 0
+            input_tokens = 0
+            output_tokens = 0
+            last_edit_time = 0.0
+            last_edit_length = 0
+            edit_count = 0
+
+            # Disable streaming edits on retries to avoid text disappearing/restarting.
+            effective_on_chunk = on_chunk if attempt == 1 else None
+
+            # Wrap BOTH connection and full iteration in a timeout so a stalled
+            # stream (chunks stop arriving) cannot hang forever.
+            async with asyncio.timeout(STREAMING_CONSTANTS.STREAM_ITERATION_TIMEOUT):
+                stream = await get_gemini_client().aio.models.generate_content_stream(
+                    model=GEMINI_MODEL_NAME,
+                    contents=content,
+                )
+
+                async for chunk in stream:
+                    # Guard: chunk.text raises ValueError on safety blocks / empty parts.
+                    try:
+                        chunk_text = chunk.text
+                    except (ValueError, AttributeError):
+                        chunk_text = None
+                    if chunk_text:
+                        accumulated_text += chunk_text
+
+                    if chunk.usage_metadata:
+                        token_count = chunk.usage_metadata.total_token_count or 0
+                        input_tokens = chunk.usage_metadata.prompt_token_count or 0
+                        output_tokens = chunk.usage_metadata.candidates_token_count or 0
+
+                    if (
+                        effective_on_chunk
+                        and accumulated_text
+                        and edit_count < STREAMING_CONSTANTS.MAX_STREAMING_EDITS
+                    ):
+                        now = time.monotonic()
+                        chars_since_edit = len(accumulated_text) - last_edit_length
+                        if (
+                            now - last_edit_time >= STREAMING_CONSTANTS.EDIT_INTERVAL_SECONDS
+                            and chars_since_edit >= STREAMING_CONSTANTS.MIN_CHARS_FOR_UPDATE
+                        ):
+                            try:
+                                await effective_on_chunk(accumulated_text)
+                                last_edit_time = now
+                                last_edit_length = len(accumulated_text)
+                                edit_count += 1
+                            except Exception as edit_err:
+                                # Check if the message was permanently deleted;
+                                # if so, stop all future streaming edits.
+                                err_msg = str(edit_err).lower()
+                                if "message to edit not found" in err_msg or "message can't be edited" in err_msg:
+                                    logger.debug(
+                                        "Streaming target message gone for user %s, disabling edits",
+                                        user_id,
+                                    )
+                                    effective_on_chunk = None
+                                elif "message is not modified" in err_msg:
+                                    logger.debug(
+                                        "Streaming edit skipped (no change) for user %s",
+                                        user_id,
+                                    )
+                                else:
+                                    logger.warning(
+                                        "Streaming edit failed for user %s: %s",
+                                        user_id, edit_err,
+                                    )
+
+            final_text = accumulated_text.strip()
+
+            # Fallback: if the stream succeeded but usage_metadata was missing
+            # (e.g. abnormal stream termination), estimate tokens from text length
+            # to avoid a false quota refund in execute_translation.
+            if final_text and token_count == 0:
+                estimated = max(1, len(final_text) // 4)  # ~4 chars per token
+                logger.warning(
+                    "Streaming response had 0 token_count despite %d chars; "
+                    "estimating %d tokens",
+                    len(final_text), estimated,
+                )
+                token_count = estimated
+                # Split estimate roughly 30/70 for input/output as a safe guess.
+                input_tokens = 0
+                output_tokens = estimated
+
+            logger.debug(
+                "Gemini streaming response: %d chars, tokens=%d (in:%d/out:%d)",
+                len(final_text), token_count, input_tokens, output_tokens,
+            )
+            return final_text, token_count, input_tokens, output_tokens
+
+        except tuple(_retryable_errors) as e:
+            last_exception = e
+            logger.warning(
+                "Streaming attempt %d/%d failed (%s) for user %s: %s",
+                attempt, RETRY_CONSTANTS.MAX_ATTEMPTS,
+                type(e).__name__, user_id, e,
+            )
+            if attempt < RETRY_CONSTANTS.MAX_ATTEMPTS:
+                await asyncio.sleep(delay)
+                delay = min(
+                    delay * RETRY_CONSTANTS.BACKOFF_MULTIPLIER,
+                    RETRY_CONSTANTS.MAX_DELAY_SECONDS,
+                )
+                continue
+
+            # All streaming retries exhausted — fall back to non-streaming API
+            # as a last resort before returning an error to the user.
+            logger.info(
+                "Streaming retries exhausted for user %s, falling back to non-streaming",
+                user_id,
+            )
+            try:
+                return await _perform_single_model_translation(
+                    user_id, text_input, image_data, mime_type,
+                )
+            except Exception as fallback_err:
+                log_error_with_context(
+                    fallback_err,
+                    context_info={"operation": "streaming_fallback_to_single"},
+                    user_id=user_id,
+                )
+                return _retryable_errors.get(type(e), S.GENERIC_ERROR), 0, 0, 0
+
+        except genai_errors.ClientError as e:
+            log_error_with_context(
+                e,
+                context_info={"operation": "streaming_translation"},
+                user_id=user_id,
+            )
+            return S.ERROR_CLIENT_REQUEST, 0, 0, 0
+
+        except Exception as e:
+            log_error_with_context(
+                e,
+                context_info={"operation": "streaming_translation"},
+                user_id=user_id,
+            )
+            return S.GENERIC_ERROR, 0, 0, 0
+
+    # Should not reach here, but just in case
+    log_error_with_context(
+        last_exception or RuntimeError("All retries exhausted"),
+        context_info={"operation": "streaming_translation", "attempts": RETRY_CONSTANTS.MAX_ATTEMPTS},
+        user_id=user_id,
+    )
+    return S.GENERIC_ERROR, 0, 0, 0
+
+
+def _make_streaming_callback(
+    bot,
+    chat_id: int,
+    message_id: int,
+) -> Callable[[str], Awaitable[None]]:
+    """Create callback that edits Telegram message with streamed text + cursor.
+
+    The callback intentionally re-raises exceptions from bot.edit_message_text
+    so that the caller (_perform_streaming_translation) can inspect the error
+    message and decide whether to disable further edits (e.g. message deleted)
+    or just log a warning.
+    """
+
+    async def _on_chunk(accumulated_text: str) -> None:
+        display_text = safe_html(accumulated_text) + STREAMING_CONSTANTS.CURSOR_INDICATOR
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=display_text,
+            parse_mode=ParseMode.HTML,
+        )
+
+    return _on_chunk
+
+
 async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Handle message translation for various message types with rate limiting.
@@ -574,6 +803,36 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             )
             return
 
+        # Use streaming for text_only and image_only; text_with_image needs
+        # the complete response for structured IMAGE_TEXT/CAPTION_TEXT parsing.
+        is_streamable = not (image_data and text_input)
+
+        if is_streamable and status_message:
+            on_chunk = _make_streaming_callback(
+                bot=context.bot,
+                chat_id=update.effective_chat.id,
+                message_id=status_message.message_id,
+            )
+
+            async def _streaming_translate(
+                user_id, text_input=None, image_data=None, mime_type="image/jpeg",
+            ):
+                return await _perform_streaming_translation(
+                    user_id, text_input, image_data, mime_type, on_chunk=on_chunk,
+                )
+
+            deps = TranslationDeps(
+                ensure_subscription=ensure_free_user_sub,
+                reserve_quota=decrement_translation_limit,
+                refund_quota=increment_translation_limit,
+                translate=_streaming_translate,
+                log_usage=log_token_usage_to_db,
+                record_session_usage=user_manager.record_token_usage,
+                log_error=log_error_with_context,
+            )
+        else:
+            deps = _default_translation_deps()
+
         # Execute the core translation logic (reserve → translate → refund/log).
         try:
             result = await execute_translation(
@@ -582,7 +841,7 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 image_data=image_data,
                 image_mime_type=image_mime_type,
                 is_premium=is_premium,
-                deps=_default_translation_deps(),
+                deps=deps,
             )
         except Exception as e:
             log_error_with_context(
