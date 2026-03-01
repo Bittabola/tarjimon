@@ -145,10 +145,10 @@ class TelegramConstants:
 class StreamingConstants:
     """Streaming response display constants."""
 
-    EDIT_INTERVAL_SECONDS: Final[float] = 0.8
+    EDIT_INTERVAL_SECONDS: Final[float] = 0.5
     CURSOR_INDICATOR: Final[str] = "\u258c"
-    MIN_CHARS_FOR_UPDATE: Final[int] = 10
-    MAX_STREAMING_EDITS: Final[int] = 30
+    MIN_CHARS_FOR_UPDATE: Final[int] = 5
+    MAX_STREAMING_EDITS: Final[int] = 40
     STREAM_ITERATION_TIMEOUT: Final[int] = 150  # seconds; > GEMINI_DEFAULT to cover slow streams
 
 
