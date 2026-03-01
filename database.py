@@ -102,7 +102,6 @@ def init_db():
                 cost_usd REAL DEFAULT 0.0,
                 content_type TEXT DEFAULT NULL,
                 content_preview TEXT DEFAULT NULL,
-                video_duration_minutes INTEGER DEFAULT NULL,
                 parent_request_id INTEGER DEFAULT NULL
             )
             """)
@@ -113,7 +112,6 @@ def init_db():
                 user_id INTEGER NOT NULL UNIQUE,
                 tier TEXT NOT NULL DEFAULT 'free',
                 expires_at TEXT,
-                youtube_minutes_remaining INTEGER NOT NULL DEFAULT 0,
                 translation_remaining INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -210,22 +208,6 @@ def init_db():
                 "CREATE INDEX IF NOT EXISTS idx_feedback_admin_msg ON feedback(admin_msg_id)"
             )
 
-            # Migration: add new columns if they don't exist
-            try:
-                cursor.execute(
-                    "ALTER TABLE user_subscriptions ADD COLUMN youtube_minutes_remaining INTEGER NOT NULL DEFAULT 0"
-                )
-            except sqlite3.OperationalError:
-                pass  # Column already exists
-
-            # Migration: rename old column if it exists (for existing databases)
-            try:
-                cursor.execute(
-                    "ALTER TABLE user_subscriptions RENAME COLUMN youtube_remaining TO youtube_minutes_remaining"
-                )
-            except sqlite3.OperationalError:
-                pass  # Column doesn't exist or already renamed
-
             try:
                 cursor.execute(
                     "ALTER TABLE user_subscriptions ADD COLUMN translation_remaining INTEGER NOT NULL DEFAULT 0"
@@ -256,10 +238,6 @@ def init_db():
                     "ALTER TABLE api_token_usage ADD COLUMN content_preview TEXT DEFAULT NULL",
                 ),
                 (
-                    "video_duration_minutes",
-                    "ALTER TABLE api_token_usage ADD COLUMN video_duration_minutes INTEGER DEFAULT NULL",
-                ),
-                (
                     "parent_request_id",
                     "ALTER TABLE api_token_usage ADD COLUMN parent_request_id INTEGER DEFAULT NULL",
                 ),
@@ -288,22 +266,20 @@ def log_token_usage_to_db(
     output_tokens: int = 0,
     content_type: str | None = None,
     content_preview: str | None = None,
-    video_duration_minutes: int | None = None,
     parent_request_id: int | None = None,
 ) -> int | None:
     """Log token usage to SQLite database with improved error handling and cost tracking.
 
     Args:
         user_id: Telegram user ID
-        service_name: Service name (gemini, gemini_youtube)
+        service_name: Service name (e.g. gemini)
         tokens_this_call: Total tokens used
         is_translation: Whether this is a translation request
         input_tokens: Number of input tokens (for cost calculation)
         output_tokens: Number of output tokens (for cost calculation)
-        content_type: Type of content (text, image, youtube, etc.)
+        content_type: Type of content (text, image, etc.)
         content_preview: Preview of content (truncated)
-        video_duration_minutes: Duration of video in minutes (for YouTube requests)
-        parent_request_id: ID of parent request (for followups linking to videos)
+        parent_request_id: ID of parent request
 
     Returns:
         The inserted row ID, or None if logging failed
@@ -334,8 +310,8 @@ def log_token_usage_to_db(
 
             cursor.execute(
                 """
-            INSERT INTO api_token_usage (timestamp_utc, user_id, service_name, token_count, is_translation_related, input_tokens, output_tokens, cost_usd, content_type, content_preview, video_duration_minutes, parent_request_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO api_token_usage (timestamp_utc, user_id, service_name, token_count, is_translation_related, input_tokens, output_tokens, cost_usd, content_type, content_preview, parent_request_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     timestamp_utc,
@@ -348,7 +324,6 @@ def log_token_usage_to_db(
                     cost_usd,
                     content_type,
                     content_preview[:500] if content_preview else None,
-                    video_duration_minutes,
                     parent_request_id,
                 ),
             )
@@ -413,7 +388,7 @@ def log_error_to_db(
         error_type: Type/category of error (e.g., 'api_error', 'rate_limit', 'validation')
         error_message: Human-readable error message
         user_id: Telegram user ID (if available)
-        content_type: Type of content being processed (text, image, youtube)
+        content_type: Type of content being processed (text, image)
         content_preview: Preview of content that caused the error
         stack_trace: Full stack trace (if available)
     """
@@ -506,7 +481,7 @@ def get_user_subscription(user_id: int) -> dict | None:
 
             cursor.execute(
                 """
-                SELECT tier, expires_at, youtube_minutes_remaining, translation_remaining 
+                SELECT tier, expires_at, translation_remaining
                 FROM user_subscriptions WHERE user_id = ?
             """,
                 (user_id,),
@@ -519,8 +494,7 @@ def get_user_subscription(user_id: int) -> dict | None:
             return {
                 "tier": result[0],
                 "expires_at": result[1],
-                "youtube_minutes_remaining": result[2] or 0,
-                "translation_remaining": result[3] or 0,
+                "translation_remaining": result[2] or 0,
             }
 
     except sqlite3.Error as e:
@@ -588,7 +562,7 @@ def activate_premium(
             # Check existing subscription within the same transaction
             cursor.execute(
                 """
-                SELECT tier, expires_at, youtube_minutes_remaining, translation_remaining
+                SELECT tier, expires_at, translation_remaining
                 FROM user_subscriptions WHERE user_id = ?
             """,
                 (user_id,),
@@ -609,13 +583,13 @@ def activate_premium(
                 new_expiry_iso = new_expiry.isoformat()
 
                 # Add new limits to existing remaining limits
-                new_translation = (result[3] or 0) + translation_limit
+                new_translation = (result[2] or 0) + translation_limit
 
                 cursor.execute(
                     """
                     UPDATE user_subscriptions
                     SET tier = 'premium', expires_at = ?,
-                        youtube_minutes_remaining = 0, translation_remaining = ?,
+                        translation_remaining = ?,
                         updated_at = ?
                     WHERE user_id = ?
                 """,
@@ -634,12 +608,11 @@ def activate_premium(
                 cursor.execute(
                     """
                     INSERT INTO user_subscriptions
-                    (user_id, tier, expires_at, youtube_minutes_remaining, translation_remaining, created_at, updated_at)
-                    VALUES (?, 'premium', ?, 0, ?, ?, ?)
+                    (user_id, tier, expires_at, translation_remaining, created_at, updated_at)
+                    VALUES (?, 'premium', ?, ?, ?, ?)
                     ON CONFLICT(user_id) DO UPDATE SET
                         tier = 'premium',
                         expires_at = excluded.expires_at,
-                        youtube_minutes_remaining = 0,
                         translation_remaining = excluded.translation_remaining,
                         updated_at = excluded.updated_at
                 """,
@@ -842,11 +815,11 @@ def get_user_remaining_limits(user_id: int) -> dict:
         user_id: Telegram user ID
 
     Returns:
-        Dict with youtube_minutes_remaining and translation_remaining
+        Dict with translation_remaining
     """
     subscription = get_user_subscription(user_id)
     if not subscription:
-        return {"youtube_minutes_remaining": 0, "translation_remaining": 0}
+        return {"translation_remaining": 0}
 
     # Check if subscription is still valid
     if subscription["expires_at"]:
@@ -854,12 +827,11 @@ def get_user_remaining_limits(user_id: int) -> dict:
             expires_at = datetime.fromisoformat(subscription["expires_at"])
             now = datetime.now(timezone.utc)
             if expires_at <= now:
-                return {"youtube_minutes_remaining": 0, "translation_remaining": 0}
+                return {"translation_remaining": 0}
         except Exception:
-            return {"youtube_minutes_remaining": 0, "translation_remaining": 0}
+            return {"translation_remaining": 0}
 
     return {
-        "youtube_minutes_remaining": subscription.get("youtube_minutes_remaining", 0),
         "translation_remaining": subscription.get("translation_remaining", 0),
     }
 
@@ -1079,7 +1051,7 @@ def ensure_free_user_subscription(
                     """
                     UPDATE user_subscriptions
                     SET tier = 'free', expires_at = ?,
-                        youtube_minutes_remaining = 0, translation_remaining = ?,
+                        translation_remaining = ?,
                         updated_at = ?
                     WHERE user_id = ?
                 """,
@@ -1090,8 +1062,8 @@ def ensure_free_user_subscription(
                 cursor.execute(
                     """
                     INSERT INTO user_subscriptions
-                    (user_id, tier, expires_at, youtube_minutes_remaining, translation_remaining, created_at, updated_at)
-                    VALUES (?, 'free', ?, 0, ?, ?, ?)
+                    (user_id, tier, expires_at, translation_remaining, created_at, updated_at)
+                    VALUES (?, 'free', ?, ?, ?, ?)
                 """,
                     (
                         user_id,

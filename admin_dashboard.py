@@ -264,11 +264,7 @@ def get_errors_list(limit: int = 100, offset: int = 0) -> list[dict]:
 
 
 def get_requests_list(limit: int = 100, offset: int = 0) -> list[dict]:
-    """Get list of recent requests with cost and amortized revenue info.
-
-    Followup costs are aggregated into their parent YouTube video's P/L.
-    Uses a single optimized query with LEFT JOIN subquery for followup aggregation.
-    """
+    """Get list of recent requests with cost and amortized revenue info."""
     db_manager = DatabaseManager()
     requests = []
 
@@ -276,27 +272,15 @@ def get_requests_list(limit: int = 100, offset: int = 0) -> list[dict]:
         with db_manager.get_connection() as conn:
             cursor = conn.cursor()
 
-            # Single optimized query: JOIN main requests with aggregated followup costs
             cursor.execute(
                 """
                 SELECT
                     u.id, u.timestamp_utc, u.user_id, u.service_name,
                     u.token_count, u.input_tokens, u.output_tokens, u.cost_usd,
-                    u.content_type, u.content_preview, u.video_duration_minutes,
-                    s.tier as user_tier,
-                    COALESCE(f.followup_cost, 0) as followup_cost,
-                    COALESCE(f.followup_count, 0) as followup_count
+                    u.content_type, u.content_preview,
+                    s.tier as user_tier
                 FROM api_token_usage u
                 LEFT JOIN user_subscriptions s ON u.user_id = s.user_id
-                LEFT JOIN (
-                    SELECT parent_request_id,
-                           SUM(cost_usd) as followup_cost,
-                           COUNT(*) as followup_count
-                    FROM api_token_usage
-                    WHERE content_type = 'youtube_followup' AND parent_request_id IS NOT NULL
-                    GROUP BY parent_request_id
-                ) f ON u.id = f.parent_request_id
-                WHERE u.content_type != 'youtube_followup'
                 ORDER BY u.timestamp_utc DESC
                 LIMIT ? OFFSET ?
             """,
@@ -305,27 +289,18 @@ def get_requests_list(limit: int = 100, offset: int = 0) -> list[dict]:
 
             for row in cursor.fetchall():
                 request_id = row[0]
-                user_tier = row[11] or "free"
+                user_tier = row[10] or "free"
                 cost = row[7] or 0.0
                 content_type = row[8]
                 content_preview = row[9]
-                video_duration = row[10] or 0
-                followup_cost = row[12] or 0.0
-                followup_count = row[13] or 0
-
-                # Total cost includes followup costs for YouTube videos
-                total_cost = cost + followup_cost
 
                 # Calculate amortized revenue for premium users
                 revenue = 0.0
                 if user_tier == "premium":
                     if content_type in ("text", "image", "image_with_caption"):
-                        # Translation: flat rate per request
                         revenue = REVENUE_PER_TRANSLATION
-                    # Historical YouTube entries get zero revenue (feature removed)
 
-                # Profit/Loss = revenue - total cost (including followups for videos)
-                profit_loss = revenue - total_cost
+                profit_loss = revenue - cost
 
                 requests.append(
                     {
@@ -336,15 +311,12 @@ def get_requests_list(limit: int = 100, offset: int = 0) -> list[dict]:
                         "token_count": row[4],
                         "input_tokens": row[5] or 0,
                         "output_tokens": row[6] or 0,
-                        "cost_usd": total_cost,  # Includes followup costs for videos
+                        "cost_usd": cost,
                         "content_type": content_type,
                         "content_preview": content_preview,
-                        "video_duration_minutes": video_duration,
                         "user_tier": user_tier,
                         "revenue": revenue,
                         "profit_loss": profit_loss,
-                        "followup_cost": followup_cost,
-                        "followup_count": followup_count,
                     }
                 )
     except Exception as e:
@@ -586,7 +558,6 @@ def render_base_html(title: str, content: str, active_tab: str = "overview") -> 
         .badge-premium {{ background: #f39c12; color: white; }}
         .badge-free {{ background: #95a5a6; color: white; }}
         .badge-error {{ background: #e74c3c; color: white; }}
-        .badge-youtube {{ background: #c4302b; color: white; }}
         .badge-translation {{ background: #3498db; color: white; }}
         
         .text-muted {{ color: #7f8c8d; font-size: 0.85rem; }}
@@ -807,15 +778,7 @@ async def dashboard_requests(
         profit_sign = "+" if profit_loss > 0 else ""
         profit_html = f'<span class="{profit_class}">{profit_sign}{format_currency(profit_loss)}</span>'
 
-        # Content type with duration and followup info for YouTube
         content_type = req.get("content_type", "-") or "-"
-        duration = req.get("video_duration_minutes", 0)
-        followup_count = req.get("followup_count", 0)
-        if content_type == "youtube" and duration > 0:
-            if followup_count > 0:
-                content_type = f"youtube ({duration}min +{followup_count}Q&A)"
-            else:
-                content_type = f"youtube ({duration}min)"
 
         escaped_content_type = escape_html(content_type)
         escaped_preview = escape_html((req["content_preview"] or "-")[:30])
