@@ -458,3 +458,61 @@ async def test_streaming_estimates_tokens_when_metadata_missing(tmp_db, patch_ge
     # Should NOT have refunded quota (token estimate > 0 means success)
     sub = database.get_user_subscription(user_id)
     assert sub["translation_remaining"] == 9  # decremented, not refunded
+
+
+async def test_streaming_message_too_long_sends_continuation(tmp_db, patch_gemini):
+    """When streamed text exceeds 4096 chars, edits stop and a continuation message is sent."""
+    from telegram.error import BadRequest
+
+    user_id = 36
+    database.ensure_free_user_subscription(user_id=user_id, translations=10)
+
+    long_text = "A" * 5000  # exceeds Telegram's 4096 limit
+    chunks = make_gemini_stream_chunks(
+        text=long_text, total_tokens=200, input_tokens=100, output_tokens=100,
+        num_chunks=1,  # Single chunk so first edit attempt triggers the limit
+    )
+
+    async def stream_effect(*a, **kw):
+        return fake_stream_iterator(chunks)
+
+    patch_gemini.aio.models.generate_content_stream.side_effect = stream_effect
+
+    update, context = make_text_update(text="Long text", user_id=user_id, chat_id=user_id)
+
+    # Make edit_message_text raise "message_too_long" once text gets big enough.
+    original_edit = context.bot.edit_message_text
+    edit_call_count = 0
+
+    async def edit_side_effect(*args, **kwargs):
+        nonlocal edit_call_count
+        edit_call_count += 1
+        text = kwargs.get("text", "")
+        # Simulate Telegram rejecting message that's too long
+        if len(str(text)) > 4096:
+            raise BadRequest("Message_too_long")
+        return await original_edit(*args, **kwargs)
+
+    context.bot.edit_message_text = AsyncMock(side_effect=edit_side_effect)
+
+    # send_message returns a mock with a message_id for the continuation message
+    continuation_msg = MagicMock()
+    continuation_msg.message_id = 999
+    context.bot.send_message = AsyncMock(return_value=continuation_msg)
+
+    await translate_message(update, context)
+
+    # Continuation message should have been sent
+    send_calls = context.bot.send_message.call_args_list
+    continuation_texts = [str(c) for c in send_calls]
+    assert any("davom etmoqda" in t for t in continuation_texts)
+
+    # Continuation message should have been deleted after final formatting
+    context.bot.delete_message.assert_called_once_with(
+        chat_id=user_id,
+        message_id=999,
+    )
+
+    # Translation should still complete and quota should be decremented
+    sub = database.get_user_subscription(user_id)
+    assert sub["translation_remaining"] == 9

@@ -142,6 +142,8 @@ PROCESSING: Final[str] = "Xabar qabul qilindi. Tekshirilmoqda..."
 
 TRANSLATING: Final[str] = "Tarjima qilinmoqda..."
 
+TRANSLATION_CONTINUING: Final[str] = "Tarjima davom etmoqda..."
+
 INVALID_CALLBACK_DATA: Final[str] = "Xatolik: noto'g'ri ma'lumot."
 
 

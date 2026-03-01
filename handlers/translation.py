@@ -508,6 +508,12 @@ async def _perform_streaming_translation(
                                         user_id,
                                     )
                                     effective_on_chunk = None
+                                elif "message_too_long" in err_msg:
+                                    logger.info(
+                                        "Streaming text exceeded Telegram limit for user %s, disabling edits",
+                                        user_id,
+                                    )
+                                    effective_on_chunk = None
                                 elif "message is not modified" in err_msg:
                                     logger.debug(
                                         "Streaming edit skipped (no change) for user %s",
@@ -600,29 +606,62 @@ async def _perform_streaming_translation(
     return S.GENERIC_ERROR, 0, 0, 0
 
 
-def _make_streaming_callback(
-    bot,
-    chat_id: int,
-    message_id: int,
-) -> Callable[[str], Awaitable[None]]:
-    """Create callback that edits Telegram message with streamed text + cursor.
+class _StreamingCallback:
+    """Stateful callback that edits a Telegram message with streamed text + cursor.
 
-    The callback intentionally re-raises exceptions from bot.edit_message_text
-    so that the caller (_perform_streaming_translation) can inspect the error
-    message and decide whether to disable further edits (e.g. message deleted)
-    or just log a warning.
+    When the accumulated text exceeds Telegram's 4096 char limit, the edit
+    raises ``message_too_long``.  The callback catches this, finalises the
+    current message (removes cursor), sends a "Tarjima davom etmoqda..."
+    continuation message, and re-raises so the streaming loop disables
+    further edits.  The continuation message ID is stored so that
+    ``translate_message`` can delete it after final formatting.
     """
 
-    async def _on_chunk(accumulated_text: str) -> None:
-        display_text = safe_html(accumulated_text) + STREAMING_CONSTANTS.CURSOR_INDICATOR
-        await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=display_text,
-            parse_mode=ParseMode.HTML,
-        )
+    def __init__(self, bot, chat_id: int, message_id: int) -> None:
+        self._bot = bot
+        self._chat_id = chat_id
+        self._message_id = message_id
+        self.continuation_message_id: int | None = None
 
-    return _on_chunk
+    async def __call__(self, accumulated_text: str) -> None:
+        display_text = safe_html(accumulated_text) + STREAMING_CONSTANTS.CURSOR_INDICATOR
+        try:
+            await self._bot.edit_message_text(
+                chat_id=self._chat_id,
+                message_id=self._message_id,
+                text=display_text,
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception as exc:
+            if "message_too_long" in str(exc).lower():
+                await self._handle_message_too_long()
+            raise
+
+    async def _handle_message_too_long(self) -> None:
+        """Finalise current message and send continuation indicator."""
+        # Remove cursor from current message (show last successful text).
+        # The last successful edit already has the most recent text that fit,
+        # so we just need to send the continuation message.
+        try:
+            msg = await self._bot.send_message(
+                chat_id=self._chat_id,
+                text=S.TRANSLATION_CONTINUING,
+            )
+            self.continuation_message_id = msg.message_id
+        except Exception:
+            pass  # Best-effort; streaming still completes
+
+
+async def _delete_continuation_message(context, update, streaming_cb) -> None:
+    """Delete the 'Tarjima davom etmoqda...' message if it was sent."""
+    if streaming_cb and streaming_cb.continuation_message_id:
+        try:
+            await context.bot.delete_message(
+                chat_id=update.effective_chat.id,
+                message_id=streaming_cb.continuation_message_id,
+            )
+        except Exception:
+            pass  # Best-effort cleanup
 
 
 async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -814,8 +853,9 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         # the complete response for structured IMAGE_TEXT/CAPTION_TEXT parsing.
         is_streamable = not (image_data and text_input)
 
+        streaming_cb = None
         if is_streamable and status_message:
-            on_chunk = _make_streaming_callback(
+            streaming_cb = _StreamingCallback(
                 bot=context.bot,
                 chat_id=update.effective_chat.id,
                 message_id=status_message.message_id,
@@ -825,7 +865,7 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 user_id, text_input=None, image_data=None, mime_type="image/jpeg",
             ):
                 return await _perform_streaming_translation(
-                    user_id, text_input, image_data, mime_type, on_chunk=on_chunk,
+                    user_id, text_input, image_data, mime_type, on_chunk=streaming_cb,
                 )
 
             deps = TranslationDeps(
@@ -857,6 +897,7 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 user_id=user_id,
                 text_preview=text_input,
             )
+            await _delete_continuation_message(context, update, streaming_cb)
             await context.bot.edit_message_text(
                 chat_id=update.effective_chat.id,
                 message_id=status_message.message_id,
@@ -864,6 +905,8 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 parse_mode=ParseMode.HTML,
             )
             return
+
+        await _delete_continuation_message(context, update, streaming_cb)
 
         if not result.success:
             error_text = result.translated_text or S.GENERIC_ERROR
