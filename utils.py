@@ -5,7 +5,6 @@ including HTML escaping, input validation, and retry decorators.
 """
 
 import html
-import re
 import functools
 import asyncio
 from collections.abc import Callable
@@ -16,11 +15,6 @@ import strings as S
 # Type variables for generic retry decorator
 P = ParamSpec("P")
 T = TypeVar("T")
-
-# YouTube URL regex pattern - matches various YouTube URL formats
-YOUTUBE_URL_PATTERN = re.compile(
-    r"(?:https?://)?(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([a-zA-Z0-9_-]{11})"
-)
 
 
 def safe_html(text: str, max_length: int | None = None) -> str:
@@ -49,50 +43,6 @@ def safe_html(text: str, max_length: int | None = None) -> str:
         return truncated + "..."
 
     return escaped
-
-
-def validate_youtube_url(url: str) -> str | None:
-    """
-    Validate and extract video ID from a YouTube URL.
-
-    Args:
-        url: The URL to validate
-
-    Returns:
-        Video ID if valid YouTube URL, None otherwise
-    """
-    if not url:
-        return None
-
-    # Strip whitespace
-    url = url.strip()
-
-    # Check against pattern
-    match = YOUTUBE_URL_PATTERN.search(url)
-    if match:
-        return match.group(1)
-
-    return None
-
-
-def extract_youtube_url(text: str) -> str | None:
-    """
-    Extract YouTube URL from text if present.
-
-    Args:
-        text: Input text that may contain a YouTube URL
-
-    Returns:
-        Full YouTube URL if found, None otherwise
-    """
-    if not text:
-        return None
-
-    video_id = validate_youtube_url(text)
-    if video_id:
-        return f"https://www.youtube.com/watch?v={video_id}"
-
-    return None
 
 
 def validate_text_input(

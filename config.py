@@ -58,9 +58,6 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET")  # Secret token for webhook validation
 FEEDBACK_WEBHOOK_SECRET = os.environ.get("FEEDBACK_WEBHOOK_SECRET")
 
-# Supadata API (for YouTube transcripts)
-SUPADATA_API_KEY = os.environ.get("SUPADATA_API_KEY")
-
 # Feedback bot settings (required for feedback feature)
 FEEDBACK_BOT_TOKEN = os.environ.get("FEEDBACK_BOT_TOKEN")
 _feedback_admin_id = os.environ.get("FEEDBACK_ADMIN_ID")
@@ -92,14 +89,7 @@ NET_REVENUE_PER_STAR = PRICING_CONSTANTS.STARS_TO_USD * (
 
 # Premium package value breakdown for amortized P/L calculation
 _PREMIUM_NET_REVENUE = SUBSCRIPTION_LIMITS.PREMIUM_PRICE_STARS * NET_REVENUE_PER_STAR
-_PREMIUM_VIDEO_SHARE = 0.80
-_PREMIUM_TRANSLATION_SHARE = 0.20
-REVENUE_PER_VIDEO_MINUTE = (
-    _PREMIUM_NET_REVENUE * _PREMIUM_VIDEO_SHARE
-) / SUBSCRIPTION_LIMITS.PREMIUM_YOUTUBE_MINUTES
-REVENUE_PER_TRANSLATION = (
-    _PREMIUM_NET_REVENUE * _PREMIUM_TRANSLATION_SHARE
-) / SUBSCRIPTION_LIMITS.PREMIUM_TRANSLATIONS
+REVENUE_PER_TRANSLATION = _PREMIUM_NET_REVENUE / SUBSCRIPTION_LIMITS.PREMIUM_TRANSLATIONS
 
 # Subscription plan (Stars pricing)
 SUBSCRIPTION_PLAN = {
@@ -107,11 +97,9 @@ SUBSCRIPTION_PLAN = {
     "days": SUBSCRIPTION_LIMITS.PREMIUM_PERIOD_DAYS,
     "title": S.PLAN_TITLE,
     "description": S.PLAN_DESCRIPTION.format(
-        youtube_minutes=SUBSCRIPTION_LIMITS.PREMIUM_YOUTUBE_MINUTES,
         translations=SUBSCRIPTION_LIMITS.PREMIUM_TRANSLATIONS,
         days=SUBSCRIPTION_LIMITS.PREMIUM_PERIOD_DAYS,
     ),
-    "youtube_minutes_limit": SUBSCRIPTION_LIMITS.PREMIUM_YOUTUBE_MINUTES,
     "translation_limit": SUBSCRIPTION_LIMITS.PREMIUM_TRANSLATIONS,
 }
 
@@ -251,8 +239,6 @@ def load_all_prompts() -> dict[str, dict[str, str]]:
     """
     return {
         "translation": _load_prompts_from_file("translation.md"),
-        "youtube_summary": _load_prompts_from_file("youtube_summary.md"),
-        "youtube_followup": _load_prompts_from_file("youtube_followup.md"),
     }
 
 
@@ -264,11 +250,6 @@ REQUIRED_PROMPTS = [
     ("translation", "text_only"),
     ("translation", "image_only"),
     ("translation", "text_with_image"),
-    ("youtube_summary", "with_transcript"),
-    ("youtube_summary", "without_transcript"),
-    ("youtube_followup", "with_transcript"),
-    ("youtube_followup", "with_summary"),
-    ("youtube_followup", "without_transcript"),
 ]
 
 

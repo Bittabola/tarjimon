@@ -11,7 +11,6 @@ from config import (
     ADMIN_USERNAME,
     ADMIN_PASSWORD,
     NET_REVENUE_PER_STAR,
-    REVENUE_PER_VIDEO_MINUTE,
     REVENUE_PER_TRANSLATION,
     logger,
 )
@@ -320,12 +319,10 @@ def get_requests_list(limit: int = 100, offset: int = 0) -> list[dict]:
                 # Calculate amortized revenue for premium users
                 revenue = 0.0
                 if user_tier == "premium":
-                    if content_type == "youtube" and video_duration > 0:
-                        # YouTube: revenue per minute of video
-                        revenue = video_duration * REVENUE_PER_VIDEO_MINUTE
-                    elif content_type in ("text", "image", "image_with_caption"):
+                    if content_type in ("text", "image", "image_with_caption"):
                         # Translation: flat rate per request
                         revenue = REVENUE_PER_TRANSLATION
+                    # Historical YouTube entries get zero revenue (feature removed)
 
                 # Profit/Loss = revenue - total cost (including followups for videos)
                 profit_loss = revenue - total_cost
@@ -426,23 +423,17 @@ def get_daily_stats(days: int = 30) -> list[dict]:
             # Revenue is calculated per-request based on content type and user tier
             cursor.execute(
                 """
-                SELECT 
+                SELECT
                     DATE(u.timestamp_utc) as date,
                     COUNT(*) as requests,
                     SUM(u.token_count) as tokens,
                     SUM(u.cost_usd) as cost,
                     COUNT(DISTINCT u.user_id) as users,
-                    -- YouTube video minutes (only for premium users)
-                    SUM(CASE 
-                        WHEN u.content_type = 'youtube' AND s.tier = 'premium' 
-                        THEN COALESCE(u.video_duration_minutes, 0) 
-                        ELSE 0 
-                    END) as premium_video_minutes,
                     -- Translation count (only for premium users)
-                    SUM(CASE 
-                        WHEN u.content_type IN ('text', 'image', 'image_with_caption') AND s.tier = 'premium' 
-                        THEN 1 
-                        ELSE 0 
+                    SUM(CASE
+                        WHEN u.content_type IN ('text', 'image', 'image_with_caption') AND s.tier = 'premium'
+                        THEN 1
+                        ELSE 0
                     END) as premium_translations
                 FROM api_token_usage u
                 LEFT JOIN user_subscriptions s ON u.user_id = s.user_id
@@ -455,14 +446,10 @@ def get_daily_stats(days: int = 30) -> list[dict]:
 
             for row in cursor.fetchall():
                 cost = row[3] or 0.0
-                premium_video_minutes = row[5] or 0
-                premium_translations = row[6] or 0
+                premium_translations = row[5] or 0
 
-                # Calculate amortized revenue
-                revenue = (
-                    premium_video_minutes * REVENUE_PER_VIDEO_MINUTE
-                    + premium_translations * REVENUE_PER_TRANSLATION
-                )
+                # Calculate amortized revenue (translation only; YouTube feature removed)
+                revenue = premium_translations * REVENUE_PER_TRANSLATION
                 balance = revenue - cost
 
                 daily.append(

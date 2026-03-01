@@ -18,7 +18,6 @@ from constants import SESSION_CONSTANTS
 from database import init_db
 from user_management import user_manager
 from admin_dashboard import router as admin_router
-from handlers import cleanup_youtube_cache
 import uvicorn
 
 # Global flag to control background task
@@ -56,12 +55,9 @@ async def _session_cleanup_loop():
             # Clean up inactive sessions
             cleaned_sessions = user_manager.cleanup_inactive_sessions()
 
-            # Clean up YouTube deduplication cache
-            cleaned_cache = cleanup_youtube_cache()
-
-            if cleaned_sessions > 0 or cleaned_cache > 0:
+            if cleaned_sessions > 0:
                 logger.debug(
-                    f"Cleanup completed: {cleaned_sessions} sessions, {cleaned_cache} cache entries"
+                    f"Cleanup completed: {cleaned_sessions} sessions"
                 )
 
             # Reset error counter on success
@@ -164,10 +160,7 @@ from handlers import (  # noqa: E402
     pre_checkout_handler,
     successful_payment_handler,
     translate_message,
-    summarize_youtube,
-    handle_youtube_question_callback,
     aloqa,
-    YOUTUBE_URL_PATTERN,
 )
 from telegram.ext import (  # noqa: E402
     MessageHandler,
@@ -227,20 +220,10 @@ application.add_handler(
     CallbackQueryHandler(handle_feedback_callback, pattern=r"^feedback_start$")
 )
 
-# YouTube summarization handler - must be registered BEFORE translation handler
-# Uses regex filter to match YouTube URLs
-youtube_filter = filters.TEXT & filters.Regex(YOUTUBE_URL_PATTERN)
-application.add_handler(MessageHandler(youtube_filter, summarize_youtube))
-
-# YouTube follow-up question callback handler (matches JSON callback data with "u" and "q" keys)
-application.add_handler(
-    CallbackQueryHandler(handle_youtube_question_callback, pattern=r'^\{"u":')
-)
-
-# Translation message handler - exclude YouTube URLs to avoid double processing
+# Translation message handler
 translate_filter = ~filters.COMMAND & (
     (filters.FORWARDED & (filters.TEXT | filters.CAPTION))
-    | (filters.TEXT & ~filters.FORWARDED & ~filters.Regex(YOUTUBE_URL_PATTERN))
+    | (filters.TEXT & ~filters.FORWARDED)
     | filters.PHOTO
     | (filters.Document.IMAGE)
 )

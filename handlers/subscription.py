@@ -32,9 +32,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if is_premium:
         subscription = get_user_subscription(user_id)
         expires_at = subscription["expires_at"] if subscription else "N/A"
-        youtube_minutes_remaining = (
-            subscription.get("youtube_minutes_remaining", 0) if subscription else 0
-        )
         translation_remaining = (
             subscription.get("translation_remaining", 0) if subscription else 0
         )
@@ -43,7 +40,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         status_text = S.STATUS_PREMIUM.format(
             date=formatted_date,
-            youtube_minutes=youtube_minutes_remaining,
             translations=translation_remaining,
         )
         keyboard = InlineKeyboardMarkup(
@@ -59,18 +55,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # Get free user's remaining limits
         subscription = get_user_subscription(user_id)
         if subscription:
-            youtube_minutes_remaining = subscription.get(
-                "youtube_minutes_remaining", SUBSCRIPTION_LIMITS.FREE_YOUTUBE_MINUTES
-            )
             translation_remaining = subscription.get(
                 "translation_remaining", SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS
             )
         else:
-            youtube_minutes_remaining = SUBSCRIPTION_LIMITS.FREE_YOUTUBE_MINUTES
             translation_remaining = SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS
 
         status_text = S.STATUS_FREE.format(
-            youtube_minutes=youtube_minutes_remaining,
             translations=translation_remaining,
         )
         keyboard = InlineKeyboardMarkup(
@@ -81,9 +72,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         S.WELCOME_MESSAGE.format(
             status_text=status_text,
-            free_youtube_minutes=SUBSCRIPTION_LIMITS.FREE_YOUTUBE_MINUTES,
             free_translations=SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS,
-            premium_youtube_minutes=plan["youtube_minutes_limit"],
             premium_translations=plan["translation_limit"],
         ),
         parse_mode=ParseMode.HTML,
@@ -106,9 +95,6 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if is_premium:
         subscription = get_user_subscription(user_id)
         expires_at = subscription["expires_at"] if subscription else "N/A"
-        youtube_minutes_remaining = (
-            subscription.get("youtube_minutes_remaining", 0) if subscription else 0
-        )
         translation_remaining = (
             subscription.get("translation_remaining", 0) if subscription else 0
         )
@@ -120,7 +106,6 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             S.SUBSCRIBE_PREMIUM_USER_INFO.format(
                 days_remaining=days_remaining,
                 date=formatted_date,
-                youtube_minutes=youtube_minutes_remaining,
                 translations=translation_remaining,
             ),
             parse_mode=ParseMode.HTML,
@@ -128,10 +113,8 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
     else:
         limits_text = S.SUBSCRIBE_FREE_USER_INFO.format(
-            free_youtube_minutes=SUBSCRIPTION_LIMITS.FREE_YOUTUBE_MINUTES,
             free_translations=SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS,
             stars=plan["stars"],
-            premium_youtube_minutes=plan["youtube_minutes_limit"],
             premium_translations=plan["translation_limit"],
             days=plan["days"],
         )
@@ -170,17 +153,13 @@ async def handle_subscribe_callback(
 
         if is_premium:
             subscription = get_user_subscription(user_id)
-            youtube_minutes_remaining = (
-                subscription.get("youtube_minutes_remaining", 0) if subscription else 0
-            )
             translation_remaining = (
                 subscription.get("translation_remaining", 0) if subscription else 0
             )
 
             await query.message.reply_text(
-                f"<b>Qolgan limitlar:</b> {youtube_minutes_remaining} daqiqa video, {translation_remaining} ta tarjima\n\n"
+                f"<b>Qolgan limitlar:</b> {translation_remaining} ta tarjima\n\n"
                 f"<b>Premium paket ({plan['stars']} Yulduz):</b>\n"
-                f"- {plan['youtube_minutes_limit']} daqiqa YouTube video\n"
                 f"- {plan['translation_limit']} ta tarjima\n"
                 f"- {plan['days']} kun amal qiladi",
                 parse_mode=ParseMode.HTML,
@@ -188,10 +167,8 @@ async def handle_subscribe_callback(
             )
         else:
             limits_text = S.SUBSCRIBE_FREE_USER_INFO.format(
-                free_youtube_minutes=SUBSCRIPTION_LIMITS.FREE_YOUTUBE_MINUTES,
                 free_translations=SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS,
                 stars=plan["stars"],
-                premium_youtube_minutes=plan["youtube_minutes_limit"],
                 premium_translations=plan["translation_limit"],
                 days=plan["days"],
             )
@@ -241,9 +218,6 @@ async def handle_stats_callback(
         # Premium user: show remaining limits and option to buy more
         subscription = get_user_subscription(user_id)
         expires_at = subscription["expires_at"] if subscription else "N/A"
-        youtube_minutes_remaining = (
-            subscription.get("youtube_minutes_remaining", 0) if subscription else 0
-        )
         translation_remaining = (
             subscription.get("translation_remaining", 0) if subscription else 0
         )
@@ -260,7 +234,6 @@ async def handle_stats_callback(
             S.STATS_PREMIUM.format(
                 days_remaining=days_remaining,
                 date=formatted_date,
-                youtube_minutes=youtube_minutes_remaining,
                 translations=translation_remaining,
             ),
             parse_mode=ParseMode.HTML,
@@ -271,11 +244,9 @@ async def handle_stats_callback(
         subscription = get_user_subscription(user_id)
 
         if subscription:
-            youtube_minutes_remaining = subscription.get("youtube_minutes_remaining", 0)
             translation_remaining = subscription.get("translation_remaining", 0)
         else:
             # New user - show full free limits
-            youtube_minutes_remaining = SUBSCRIPTION_LIMITS.FREE_YOUTUBE_MINUTES
             translation_remaining = SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS
 
         button_text = f"{S.BTN_SUBSCRIBE} - {plan['stars']} Yulduz"
@@ -285,12 +256,9 @@ async def handle_stats_callback(
 
         await query.message.reply_text(
             S.STATS_FREE.format(
-                youtube_minutes=youtube_minutes_remaining,
-                free_youtube_minutes=SUBSCRIPTION_LIMITS.FREE_YOUTUBE_MINUTES,
                 translations=translation_remaining,
                 free_translations=SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS,
                 stars=plan["stars"],
-                premium_youtube_minutes=plan["youtube_minutes_limit"],
                 premium_translations=plan["translation_limit"],
                 days=plan["days"],
             ),
@@ -338,7 +306,6 @@ async def successful_payment_handler(
 
     plan = SUBSCRIPTION_PLAN
     days = plan["days"]
-    youtube_minutes_limit = plan["youtube_minutes_limit"]
     translation_limit = plan["translation_limit"]
 
     # Log the payment first (this creates the record for idempotency)
@@ -354,14 +321,9 @@ async def successful_payment_handler(
         return
 
     # Activate premium with limits
-    if activate_premium(user_id, days, youtube_minutes_limit, translation_limit):
+    if activate_premium(user_id, days, translation_limit):
         subscription = get_user_subscription(user_id)
         expires_at = subscription["expires_at"] if subscription else "N/A"
-        youtube_minutes_remaining = (
-            subscription.get("youtube_minutes_remaining", 0)
-            if subscription
-            else youtube_minutes_limit
-        )
         translation_remaining = (
             subscription.get("translation_remaining", 0)
             if subscription
@@ -375,7 +337,6 @@ async def successful_payment_handler(
             f"{S.PAYMENT_SUBSCRIPTION_ACTIVATED}"
             f"{S.PAYMENT_EXPIRES_AT.format(date=formatted_date)}"
             f"{S.PAYMENT_YOUR_LIMITS}"
-            f"{S.PAYMENT_YOUTUBE_MINUTES_FORMAT.format(minutes=youtube_minutes_remaining)}"
             f"{S.PAYMENT_TRANSLATIONS_FORMAT.format(count=translation_remaining)}"
             f"{S.PAYMENT_THANK_YOU}",
             parse_mode=ParseMode.HTML,

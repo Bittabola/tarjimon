@@ -1,11 +1,11 @@
 """Smoke test configuration.
 
-Smoke tests hit real external APIs (Gemini, Supadata) and are skipped by
-default when the required credentials are not set as environment variables.
+Smoke tests hit real external APIs (Gemini) and are skipped by default when
+the required credentials are not set as environment variables.
 
 Run them explicitly with::
 
-    GEMINI_API_KEY=... SUPADATA_API_KEY=... pytest -m smoke tests/smoke/ -v
+    GEMINI_API_KEY=... pytest -m smoke tests/smoke/ -v
 
 Because the root ``tests/conftest.py`` replaces ``google.genai`` (and
 potentially ``httpx``) in ``sys.modules`` with MagicMock stubs, this
@@ -102,7 +102,6 @@ if _needs_restore:
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Auto-skip smoke-marked tests when the required env vars are absent."""
     gemini_key = os.environ.get("GEMINI_API_KEY")
-    supadata_key = os.environ.get("SUPADATA_API_KEY")
 
     for item in items:
         markers = {m.name for m in item.iter_markers()}
@@ -115,9 +114,4 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         if "gemini" in module_name and not gemini_key:
             item.add_marker(
                 pytest.mark.skip(reason="GEMINI_API_KEY not set")
-            )
-
-        if "supadata" in module_name and not supadata_key:
-            item.add_marker(
-                pytest.mark.skip(reason="SUPADATA_API_KEY not set")
             )

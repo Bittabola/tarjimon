@@ -31,7 +31,7 @@ async def test_rate_limit_exceeded(tmp_db, patch_gemini):
     user_id = 1
 
     database.ensure_free_user_subscription(
-        user_id=user_id, youtube_minutes=10, translations=10,
+        user_id=user_id, translations=10,
     )
 
     # Exhaust the rate limit by calling check_rate_limit many times.
@@ -72,7 +72,7 @@ async def test_oversized_image_rejected(tmp_db, patch_gemini):
     user_id = 2
 
     database.ensure_free_user_subscription(
-        user_id=user_id, youtube_minutes=10, translations=10,
+        user_id=user_id, translations=10,
     )
 
     # Create a photo that exceeds the size limit
@@ -109,7 +109,7 @@ async def test_empty_message_rejected(tmp_db, patch_gemini):
     user_id = 3
 
     database.ensure_free_user_subscription(
-        user_id=user_id, youtube_minutes=10, translations=10,
+        user_id=user_id, translations=10,
     )
 
     # Build a text update then strip away the content

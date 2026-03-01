@@ -48,7 +48,6 @@ def ensure_free_user_sub(user_id: int) -> None:
     """
     ensure_free_user_subscription(
         user_id,
-        youtube_minutes=SUBSCRIPTION_LIMITS.FREE_YOUTUBE_MINUTES,
         translations=SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS,
     )
 

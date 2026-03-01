@@ -105,22 +105,3 @@ def make_translation_deps(**overrides):
     )
     defaults.update(overrides)
     return TranslationDeps(**defaults)
-
-
-def make_youtube_summary_deps(**overrides):
-    """Build a YouTubeSummaryDeps with all-passing defaults. Override any field by name."""
-    from handlers.youtube import YouTubeSummaryDeps
-
-    defaults = dict(
-        ensure_subscription=MagicMock(),
-        reserve_minutes=MagicMock(return_value=True),
-        refund_minutes=MagicMock(return_value=True),
-        summarize=AsyncMock(
-            return_value=("Summary text", 200, 100, 100, "transcript")
-        ),
-        log_usage=MagicMock(return_value=42),
-        record_session_usage=MagicMock(),
-        log_error=MagicMock(),
-    )
-    defaults.update(overrides)
-    return YouTubeSummaryDeps(**defaults)

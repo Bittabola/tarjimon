@@ -8,7 +8,7 @@ Tests:
 5. stats_show callback for free user -- reply with remaining limits (contains "10")
 6. pre-checkout with valid plan -- query.answer(ok=True)
 7. pre-checkout with invalid plan -- query.answer(ok=False, ...)
-8. successful payment -- activates premium, correct limits
+8. successful payment -- activates premium, correct translation limit
 9. duplicate payment -- second reply contains "allaqachon"
 """
 
@@ -56,7 +56,7 @@ async def test_start_command_free_user(tmp_db):
 async def test_start_command_premium_user(tmp_db):
     """Premium user /start reply contains 'Premium'."""
     user_id = 2
-    database.activate_premium(user_id, days=30, youtube_minutes_limit=100, translation_limit=50)
+    database.activate_premium(user_id, days=30, translation_limit=50)
 
     update, ctx = make_command_update(command="/start", user_id=user_id)
 
@@ -105,7 +105,7 @@ async def test_subscribe_buy_callback_sends_invoice(tmp_db):
 async def test_stats_show_callback_free_user(tmp_db):
     """stats_show for a free user shows remaining limits (contains '10')."""
     user_id = 5
-    database.ensure_free_user_subscription(user_id, youtube_minutes=10, translations=10)
+    database.ensure_free_user_subscription(user_id, translations=10)
 
     update, ctx = make_callback_query_update(data="stats_show", user_id=user_id)
 
@@ -152,7 +152,7 @@ async def test_pre_checkout_invalid_plan(tmp_db):
 
 
 async def test_successful_payment_activates_premium(tmp_db):
-    """Payment activates premium with correct limits (100 min, 50 translations)."""
+    """Payment activates premium with correct limits (50 translations)."""
     user_id = 1
 
     update, ctx = make_payment_update(
@@ -167,7 +167,6 @@ async def test_successful_payment_activates_premium(tmp_db):
 
     sub = database.get_user_subscription(user_id)
     assert sub is not None
-    assert sub["youtube_minutes_remaining"] == 100
     assert sub["translation_remaining"] == 50
 
 

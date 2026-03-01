@@ -445,7 +445,6 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 text=S.TRANSLATION_LIMIT_EXCEEDED_PREMIUM.format(
                     stars=plan["stars"],
                     translation_limit=plan["translation_limit"],
-                    youtube_limit=plan["youtube_minutes_limit"],
                     days=plan["days"],
                 ),
                 parse_mode=ParseMode.HTML,
@@ -474,7 +473,6 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                     free_limit=SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS,
                     stars=plan["stars"],
                     translation_limit=plan["translation_limit"],
-                    youtube_limit=plan["youtube_minutes_limit"],
                     days=plan["days"],
                 ),
                 parse_mode=ParseMode.HTML,

@@ -446,49 +446,6 @@ def log_error_to_db(
         logger.error(f"Unexpected error in log_error_to_db: {ex}")
 
 
-def get_user_daily_youtube_count(user_id: int) -> int:
-    """
-    Get the number of YouTube summaries a user has requested today.
-
-    Args:
-        user_id: Telegram user ID
-
-    Returns:
-        Number of YouTube summary requests today
-    """
-    db_manager = DatabaseManager()
-    try:
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-
-            # Get start of today in UTC
-            now = datetime.now(timezone.utc)
-            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            today_start_iso = today_start.isoformat()
-
-            cursor.execute(
-                """
-                SELECT COUNT(*) as count
-                FROM api_token_usage 
-                WHERE user_id = ? AND service_name = 'gemini_youtube' AND timestamp_utc >= ?
-            """,
-                (user_id, today_start_iso),
-            )
-
-            result = cursor.fetchone()
-            count = result[0] if result else 0
-
-            logger.debug(f"Daily YouTube count for user {user_id}: {count}")
-            return count
-
-    except sqlite3.Error as e:
-        logger.error(f"Error getting daily YouTube count for user {user_id}: {e}")
-        return 0
-    except Exception as ex:
-        logger.error(f"Unexpected error in get_user_daily_youtube_count: {ex}")
-        return 0
-
-
 def get_user_daily_translation_count(user_id: int) -> int:
     """
     Get the number of translations a user has requested today.
@@ -605,7 +562,7 @@ def is_user_premium(user_id: int) -> bool:
 
 
 def activate_premium(
-    user_id: int, days: int, youtube_minutes_limit: int, translation_limit: int
+    user_id: int, days: int, translation_limit: int
 ) -> bool:
     """
     Activate or extend premium subscription for a user.
@@ -616,7 +573,6 @@ def activate_premium(
     Args:
         user_id: Telegram user ID
         days: Number of days to add
-        youtube_minutes_limit: Number of YouTube minutes to add
         translation_limit: Number of translations to add
 
     Returns:
@@ -653,20 +609,18 @@ def activate_premium(
                 new_expiry_iso = new_expiry.isoformat()
 
                 # Add new limits to existing remaining limits
-                new_youtube_minutes = (result[2] or 0) + youtube_minutes_limit
                 new_translation = (result[3] or 0) + translation_limit
 
                 cursor.execute(
                     """
                     UPDATE user_subscriptions
                     SET tier = 'premium', expires_at = ?,
-                        youtube_minutes_remaining = ?, translation_remaining = ?,
+                        youtube_minutes_remaining = 0, translation_remaining = ?,
                         updated_at = ?
                     WHERE user_id = ?
                 """,
                     (
                         new_expiry_iso,
-                        new_youtube_minutes,
                         new_translation,
                         now_iso,
                         user_id,
@@ -681,18 +635,17 @@ def activate_premium(
                     """
                     INSERT INTO user_subscriptions
                     (user_id, tier, expires_at, youtube_minutes_remaining, translation_remaining, created_at, updated_at)
-                    VALUES (?, 'premium', ?, ?, ?, ?, ?)
+                    VALUES (?, 'premium', ?, 0, ?, ?, ?)
                     ON CONFLICT(user_id) DO UPDATE SET
                         tier = 'premium',
                         expires_at = excluded.expires_at,
-                        youtube_minutes_remaining = excluded.youtube_minutes_remaining,
+                        youtube_minutes_remaining = 0,
                         translation_remaining = excluded.translation_remaining,
                         updated_at = excluded.updated_at
                 """,
                     (
                         user_id,
                         expires_at_iso,
-                        youtube_minutes_limit,
                         translation_limit,
                         now_iso,
                         now_iso,
@@ -700,7 +653,7 @@ def activate_premium(
                 )
 
             logger.info(
-                f"Premium activated for user {user_id}: {days} days, {youtube_minutes_limit} minutes, {translation_limit} translations"
+                f"Premium activated for user {user_id}: {days} days, {translation_limit} translations"
             )
             return True
 
@@ -797,89 +750,6 @@ def get_payment_by_telegram_id(telegram_payment_id: str) -> dict | None:
     except Exception as ex:
         logger.error(f"Unexpected error in get_payment_by_telegram_id: {ex}")
         return None
-
-
-def decrement_youtube_minutes(user_id: int, minutes: int) -> bool:
-    """
-    Decrement the user's remaining YouTube minutes.
-
-    Args:
-        user_id: Telegram user ID
-        minutes: Number of minutes to subtract
-
-    Returns:
-        True if successful, False otherwise
-    """
-    db_manager = DatabaseManager()
-    try:
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            now_iso = datetime.now(timezone.utc).isoformat()
-
-            cursor.execute(
-                """
-                UPDATE user_subscriptions 
-                SET youtube_minutes_remaining = youtube_minutes_remaining - ?, updated_at = ?
-                WHERE user_id = ? AND youtube_minutes_remaining >= ?
-            """,
-                (minutes, now_iso, user_id, minutes),
-            )
-
-            if cursor.rowcount > 0:
-                logger.debug(
-                    f"Decremented {minutes} YouTube minutes for user {user_id}"
-                )
-                return True
-            return False
-
-    except sqlite3.Error as e:
-        logger.error(f"Error decrementing YouTube minutes for user {user_id}: {e}")
-        return False
-    except Exception as ex:
-        logger.error(f"Unexpected error in decrement_youtube_minutes: {ex}")
-        return False
-
-
-def increment_youtube_minutes(user_id: int, minutes: int) -> bool:
-    """
-    Refund YouTube minutes back to the user's remaining quota.
-
-    Args:
-        user_id: Telegram user ID
-        minutes: Number of minutes to add back
-
-    Returns:
-        True if successful, False otherwise
-    """
-    if minutes <= 0:
-        return True
-
-    db_manager = DatabaseManager()
-    try:
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            now_iso = datetime.now(timezone.utc).isoformat()
-
-            cursor.execute(
-                """
-                UPDATE user_subscriptions
-                SET youtube_minutes_remaining = youtube_minutes_remaining + ?, updated_at = ?
-                WHERE user_id = ?
-            """,
-                (minutes, now_iso, user_id),
-            )
-
-            if cursor.rowcount > 0:
-                logger.debug(f"Refunded {minutes} YouTube minutes for user {user_id}")
-                return True
-            return False
-
-    except sqlite3.Error as e:
-        logger.error(f"Error refunding YouTube minutes for user {user_id}: {e}")
-        return False
-    except Exception as ex:
-        logger.error(f"Unexpected error in increment_youtube_minutes: {ex}")
-        return False
 
 
 def decrement_translation_limit(user_id: int) -> bool:
@@ -1164,7 +1034,7 @@ def cleanup_old_sessions(timeout_seconds: int = 7200) -> int:
 
 
 def ensure_free_user_subscription(
-    user_id: int, youtube_minutes: int, translations: int
+    user_id: int, translations: int
 ) -> bool:
     """
     Ensure a free user has a subscription record with the given limits.
@@ -1172,7 +1042,6 @@ def ensure_free_user_subscription(
 
     Args:
         user_id: Telegram user ID
-        youtube_minutes: Initial YouTube minutes limit
         translations: Initial translation limit
 
     Returns:
@@ -1208,26 +1077,25 @@ def ensure_free_user_subscription(
                 # Expired or invalid - reset to free tier limits
                 cursor.execute(
                     """
-                    UPDATE user_subscriptions 
-                    SET tier = 'free', expires_at = ?, 
-                        youtube_minutes_remaining = ?, translation_remaining = ?,
+                    UPDATE user_subscriptions
+                    SET tier = 'free', expires_at = ?,
+                        youtube_minutes_remaining = 0, translation_remaining = ?,
                         updated_at = ?
                     WHERE user_id = ?
                 """,
-                    (expires_at_iso, youtube_minutes, translations, now_iso, user_id),
+                    (expires_at_iso, translations, now_iso, user_id),
                 )
             else:
                 # Create new free subscription
                 cursor.execute(
                     """
-                    INSERT INTO user_subscriptions 
+                    INSERT INTO user_subscriptions
                     (user_id, tier, expires_at, youtube_minutes_remaining, translation_remaining, created_at, updated_at)
-                    VALUES (?, 'free', ?, ?, ?, ?, ?)
+                    VALUES (?, 'free', ?, 0, ?, ?, ?)
                 """,
                     (
                         user_id,
                         expires_at_iso,
-                        youtube_minutes,
                         translations,
                         now_iso,
                         now_iso,
@@ -1235,7 +1103,7 @@ def ensure_free_user_subscription(
                 )
 
             logger.info(
-                f"Free subscription ensured for user {user_id}: {youtube_minutes} min, {translations} translations"
+                f"Free subscription ensured for user {user_id}: {translations} translations"
             )
             return True
 

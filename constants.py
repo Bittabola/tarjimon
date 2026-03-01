@@ -48,29 +48,14 @@ class ImageLimits:
 
 
 @dataclass(frozen=True)
-class YouTubeLimits:
-    """YouTube processing limits."""
-
-    MAX_DURATION_MINUTES: Final[int] = 60
-    MAX_OUTPUT_TOKENS: Final[int] = 8192
-    FOLLOWUP_MAX_TOKENS: Final[int] = 8192
-    TEMPERATURE: Final[float] = 0.3
-    NO_TRANSCRIPT_MULTIPLIER: Final[int] = 5  # Cost multiplier when no transcript
-    CACHE_TTL_SECONDS: Final[int] = 120
-    QUESTION_BUTTON_MAX_LENGTH: Final[int] = 60
-
-
-@dataclass(frozen=True)
 class SubscriptionLimits:
     """Subscription tier limits."""
 
     # Free tier
-    FREE_YOUTUBE_MINUTES: Final[int] = 10
     FREE_TRANSLATIONS: Final[int] = 10
     FREE_PERIOD_DAYS: Final[int] = 30
 
     # Premium tier
-    PREMIUM_YOUTUBE_MINUTES: Final[int] = 100
     PREMIUM_TRANSLATIONS: Final[int] = 50
     PREMIUM_PERIOD_DAYS: Final[int] = 30
     PREMIUM_PRICE_STARS: Final[int] = 350
@@ -104,8 +89,6 @@ class RetryConstants:
 class APITimeouts:
     """API request timeouts in seconds."""
 
-    SUPADATA_METADATA: Final[int] = 15
-    SUPADATA_TRANSCRIPT: Final[int] = 30
     GEMINI_DEFAULT: Final[int] = 120
     TELEGRAM_FILE_DOWNLOAD: Final[int] = 60
     HEALTH_CHECK: Final[int] = 5
@@ -162,7 +145,6 @@ class TelegramConstants:
 RATE_LIMITS = RateLimits()
 TEXT_LIMITS = TextLimits()
 IMAGE_LIMITS = ImageLimits()
-YOUTUBE_LIMITS = YouTubeLimits()
 SUBSCRIPTION_LIMITS = SubscriptionLimits()
 SESSION_CONSTANTS = SessionConstants()
 RETRY_CONSTANTS = RetryConstants()

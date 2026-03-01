@@ -4,7 +4,7 @@ This document provides guidance for AI coding agents working on this codebase.
 
 ## Project Overview
 
-Tarjimon is a Telegram bot that translates messages into Uzbek and summarizes YouTube videos using Google Gemini. Built with Python 3.12+, FastAPI, and python-telegram-bot.
+Tarjimon is a Telegram bot that translates text and images into Uzbek using Google Gemini. Built with Python 3.12+, FastAPI, and python-telegram-bot.
 
 ## Build, Lint, Test Commands
 
@@ -205,7 +205,6 @@ tarjimon/
 │   ├── __init__.py      # Re-exports all handlers
 │   ├── common.py        # Shared utilities (Gemini client, error logging)
 │   ├── translation.py   # Text/image translation
-│   ├── youtube.py       # YouTube summarization
 │   ├── subscription.py  # Payments and subscriptions
 │   └── feedback.py      # User feedback
 ├── config.py            # Configuration, env vars, prompt loading
@@ -222,15 +221,16 @@ tarjimon/
 
 ### Handler Registration
 
-Handlers are added in `webhook.py` with specific order (YouTube before translation):
+Handlers are added in `webhook.py`:
 
 ```python
-# YouTube handler must be before translation to avoid double processing
-youtube_filter = filters.TEXT & filters.Regex(YOUTUBE_URL_PATTERN)
-application.add_handler(MessageHandler(youtube_filter, summarize_youtube))
-
-# Translation handler excludes YouTube URLs
-translate_filter = ~filters.COMMAND & (filters.TEXT & ~filters.Regex(YOUTUBE_URL_PATTERN) | ...)
+# Translation handler for text, images, and forwarded messages
+translate_filter = ~filters.COMMAND & (
+    (filters.FORWARDED & (filters.TEXT | filters.CAPTION))
+    | (filters.TEXT & ~filters.FORWARDED)
+    | filters.PHOTO
+    | (filters.Document.IMAGE)
+)
 application.add_handler(MessageHandler(translate_filter, translate_message))
 ```
 
@@ -273,7 +273,6 @@ Required:
 - `WEBHOOK_SECRET` - Webhook validation secret
 
 Optional:
-- `SUPADATA_API_KEY` - YouTube transcript API
 - `ADMIN_USERNAME`, `ADMIN_PASSWORD` - Admin dashboard auth
 - `TARJIMON_DB_PATH` - Database directory (default: `data/sqlite_data`)
 - `FEEDBACK_WEBHOOK_SECRET` - Required when feedback webhook is enabled

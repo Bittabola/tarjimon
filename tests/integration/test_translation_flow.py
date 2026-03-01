@@ -75,7 +75,7 @@ async def test_text_translation_full_pipeline(tmp_db, patch_gemini):
 
     # Set up user with 10 translations
     database.ensure_free_user_subscription(
-        user_id=user_id, youtube_minutes=10, translations=10,
+        user_id=user_id, translations=10,
     )
 
     # Configure Gemini mock to return a translated text
@@ -118,7 +118,7 @@ async def test_image_translation_full_pipeline(tmp_db, patch_gemini):
     user_id = 2
 
     database.ensure_free_user_subscription(
-        user_id=user_id, youtube_minutes=10, translations=10,
+        user_id=user_id, translations=10,
     )
 
     patch_gemini.aio.models.generate_content.return_value = make_gemini_response(
@@ -154,7 +154,7 @@ async def test_image_with_caption_translation(tmp_db, patch_gemini):
     user_id = 3
 
     database.ensure_free_user_subscription(
-        user_id=user_id, youtube_minutes=10, translations=10,
+        user_id=user_id, translations=10,
     )
 
     structured_response = (
@@ -193,7 +193,7 @@ async def test_translation_refund_on_api_error(tmp_db, patch_gemini):
     user_id = 4
 
     database.ensure_free_user_subscription(
-        user_id=user_id, youtube_minutes=10, translations=10,
+        user_id=user_id, translations=10,
     )
 
     # Return a response with 0 tokens to trigger refund
@@ -229,7 +229,7 @@ async def test_translation_quota_exhausted_free_user(tmp_db, patch_gemini):
 
     # Set up user with 0 translations remaining
     database.ensure_free_user_subscription(
-        user_id=user_id, youtube_minutes=10, translations=0,
+        user_id=user_id, translations=0,
     )
 
     update, context = make_text_update(
@@ -257,7 +257,7 @@ async def test_translation_usage_logged_to_db(tmp_db, patch_gemini):
     user_id = 6
 
     database.ensure_free_user_subscription(
-        user_id=user_id, youtube_minutes=10, translations=10,
+        user_id=user_id, translations=10,
     )
 
     patch_gemini.aio.models.generate_content.return_value = make_gemini_response(
