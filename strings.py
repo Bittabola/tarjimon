@@ -26,7 +26,7 @@ DAILY_MESSAGE_LIMIT_FREE: Final[str] = """Kunlik limit tugadi
 
 Bir kunda {limit} ta xabar tarjima qilishingiz mumkin. Bugun {used} ta xabar tarjima qildingiz.
 
-Premium paket ({stars} Yulduz) bilan kuniga {premium_limit} ta xabar yuborishingiz mumkin.
+Premium tarif ({stars} Yulduz) bilan kuniga {premium_limit} ta xabar yuborishingiz mumkin.
 
 Yangi limitlar ertaga taqdim etiladi."""
 
@@ -72,7 +72,9 @@ TRANSLATION_LIMIT_EXCEEDED_FREE: Final[str] = """Kunlik limit tugadi.
 
 Bepul limit: kuniga {free_limit} ta xabar.
 
-Premium paket ({stars} Yulduz / {days} kun):
+Premium tarifga obuna bo'ling va bemalol tarjima qiling.
+
+⭐ <b>Premium tarif ({stars} Yulduz / {days} kun):</b>
 - kuniga {premium_limit} ta xabar
 - barcha matn va suratli xabarlar"""
 
@@ -180,12 +182,14 @@ WELCOME_MESSAGE_FREE: Final[str] = """Salom! Men sizga quyidagi xizmatlarni takl
 📝 <b>Tarjima:</b> Matn, rasm yoki forward qilingan xabarlarni o'zbekchaga o'girish
 
 ━━━━━━━━━━━━━━━━━━
-📊 <b>Sizning rejangiz:</b> Bepul
+📊 <b>Sizning tarifingiz:</b> Bepul tarif
 
 Bir kunda {limit} ta xabar tarjima qilishingiz mumkin. Bugun {used} ta xabar tarjima qildingiz.
 
 ━━━━━━━━━━━━━━━━━━
-⭐ <b>Premium paket ({stars} Yulduz / {days} kun):</b>
+Premium tarifga obuna bo'ling va bemalol tarjima qiling.
+
+⭐ <b>Premium tarif ({stars} Yulduz / {days} kun):</b>
 - kuniga {premium_limit} ta xabar ({multiplier} barobar ko'proq)
 - barcha matn va suratli xabarlar"""
 
@@ -194,7 +198,7 @@ WELCOME_MESSAGE_PREMIUM: Final[str] = """Salom! Men sizga quyidagi xizmatlarni t
 📝 <b>Tarjima:</b> Matn, rasm yoki forward qilingan xabarlarni o'zbekchaga o'girish
 
 ━━━━━━━━━━━━━━━━━━
-⭐ <b>Sizning rejangiz:</b> Premium
+⭐ <b>Sizning tarifingiz:</b> Premium
 Amal qilish: {date}gacha
 
 Bir kunda {limit} ta xabar tarjima qilishingiz mumkin. Bugun {used} ta xabar tarjima qildingiz.
@@ -215,12 +219,14 @@ Amal qilish muddati: {days_remaining} kun (<b>{date}</b>gacha)
 
 Bir kunda {limit} ta xabar tarjima qilishingiz mumkin. Bugun {used} ta xabar tarjima qildingiz.
 
-Obunani uzaytirish uchun yangi paket xarid qilishingiz mumkin:"""
+Obunani uzaytirish uchun yangi tarif xarid qilishingiz mumkin:"""
 
-SUBSCRIBE_FREE_USER_INFO: Final[str] = """<b>Bepul reja:</b>
+SUBSCRIBE_FREE_USER_INFO: Final[str] = """<b>Bepul tarif:</b>
 - kuniga {free_messages} ta xabar
 
-<b>Premium paket ({stars} Yulduz / {days} kun):</b>
+Premium tarifga obuna bo'ling va bemalol tarjima qiling.
+
+⭐ <b>Premium tarif ({stars} Yulduz / {days} kun):</b>
 - kuniga {premium_messages} ta xabar
 - barcha matn va suratli xabarlar"""
 
@@ -235,13 +241,15 @@ Amal qilish muddati: {days_remaining} kun (<b>{date}</b>gacha)
 
 Bir kunda {limit} ta xabar tarjima qilishingiz mumkin. Bugun {used} ta xabar tarjima qildingiz.
 
-Obunani uzaytirish uchun yangi paket xarid qiling:"""
+Obunani uzaytirish uchun yangi tarif xarid qiling:"""
 
-STATS_FREE: Final[str] = """<b>Bepul reja</b>
+STATS_FREE: Final[str] = """<b>Bepul tarif</b>
 
 Bir kunda {limit} ta xabar tarjima qilishingiz mumkin. Bugun {used} ta xabar tarjima qildingiz.
 
-<b>Premium paket ({stars} Yulduz / {days} kun):</b>
+Premium tarifga obuna bo'ling va bemalol tarjima qiling.
+
+⭐ <b>Premium tarif ({stars} Yulduz / {days} kun):</b>
 - kuniga {premium_messages} ta xabar
 - barcha matn va suratli xabarlar"""
 
@@ -250,7 +258,7 @@ Bir kunda {limit} ta xabar tarjima qilishingiz mumkin. Bugun {used} ta xabar tar
 # SUBSCRIPTION PLAN
 # =============================================================================
 
-PLAN_TITLE: Final[str] = "Premium paket"
+PLAN_TITLE: Final[str] = "Premium tarif"
 
 PLAN_DESCRIPTION: Final[str] = (
     "kuniga {daily_messages} ta xabar, {days} kun"
