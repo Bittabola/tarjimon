@@ -45,7 +45,10 @@ jobs:
           echo "$VPS_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/deploy_key "${DEPLOY_USER}@${VPS_HOST}" \
-            "bash -c 'docker pull ${IMAGE} && cd ~/docker/${REPO_NAME} && docker compose up -d'"
+            "bash -c 'for i in 1 2 3; do \
+              docker pull ${IMAGE} && break; \
+              echo \"Pull attempt \$i failed, retrying in 10s...\"; sleep 10; \
+            done && cd ~/docker/${REPO_NAME} && docker compose up -d'"
 
       - name: Verify deployment
         env:
