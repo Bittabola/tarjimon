@@ -96,12 +96,7 @@ def make_translation_deps(**overrides):
     from handlers.translation import TranslationDeps
 
     defaults = dict(
-        ensure_subscription=MagicMock(),
-        reserve_quota=MagicMock(return_value=True),
-        refund_quota=MagicMock(return_value=True),
         translate=AsyncMock(return_value=("Translated text", 100, 50, 50)),
-        log_usage=MagicMock(return_value=1),
-        record_session_usage=MagicMock(),
         log_error=MagicMock(),
     )
     defaults.update(overrides)

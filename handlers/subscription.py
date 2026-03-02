@@ -14,13 +14,14 @@ from config import (
     format_date_uzbek,
     get_days_remaining,
 )
-from constants import SUBSCRIPTION_LIMITS
+from constants import RATE_LIMITS
 from database import (
     is_user_premium,
     activate_premium,
     log_payment,
     get_payment_by_telegram_id,
     get_user_subscription,
+    get_user_daily_output_messages,
 )
 
 
@@ -28,19 +29,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the /start command."""
     user_id = update.effective_user.id
     is_premium = is_user_premium(user_id)
+    daily_used = get_user_daily_output_messages(user_id)
 
     if is_premium:
         subscription = get_user_subscription(user_id)
         expires_at = subscription["expires_at"] if subscription else "N/A"
-        translation_remaining = (
-            subscription.get("translation_remaining", 0) if subscription else 0
-        )
 
         formatted_date = format_date_uzbek(expires_at)
 
         status_text = S.STATUS_PREMIUM.format(
             date=formatted_date,
-            translations=translation_remaining,
+            used=daily_used,
+            limit=RATE_LIMITS.DAILY_MESSAGES_PREMIUM,
         )
         keyboard = InlineKeyboardMarkup(
             [
@@ -52,28 +52,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             ]
         )
     else:
-        # Get free user's remaining limits
-        subscription = get_user_subscription(user_id)
-        if subscription:
-            translation_remaining = subscription.get(
-                "translation_remaining", SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS
-            )
-        else:
-            translation_remaining = SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS
-
         status_text = S.STATUS_FREE.format(
-            translations=translation_remaining,
+            used=daily_used,
+            limit=RATE_LIMITS.DAILY_MESSAGES_FREE,
         )
         keyboard = InlineKeyboardMarkup(
             [[InlineKeyboardButton(S.BTN_SUBSCRIBE, callback_data="subscribe_show")]]
         )
 
-    plan = SUBSCRIPTION_PLAN
     await update.message.reply_text(
         S.WELCOME_MESSAGE.format(
             status_text=status_text,
-            free_translations=SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS,
-            premium_translations=plan["translation_limit"],
+            free_messages=RATE_LIMITS.DAILY_MESSAGES_FREE,
+            premium_messages=RATE_LIMITS.DAILY_MESSAGES_PREMIUM,
         ),
         parse_mode=ParseMode.HTML,
         reply_markup=keyboard,
@@ -84,6 +75,7 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the /subscribe command - show subscription options."""
     user_id = update.effective_user.id
     is_premium = is_user_premium(user_id)
+    daily_used = get_user_daily_output_messages(user_id)
 
     # Create subscription button
     plan = SUBSCRIPTION_PLAN
@@ -95,9 +87,6 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if is_premium:
         subscription = get_user_subscription(user_id)
         expires_at = subscription["expires_at"] if subscription else "N/A"
-        translation_remaining = (
-            subscription.get("translation_remaining", 0) if subscription else 0
-        )
 
         formatted_date = format_date_uzbek(expires_at)
         days_remaining = get_days_remaining(expires_at)
@@ -106,16 +95,17 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             S.SUBSCRIBE_PREMIUM_USER_INFO.format(
                 days_remaining=days_remaining,
                 date=formatted_date,
-                translations=translation_remaining,
+                used=daily_used,
+                limit=RATE_LIMITS.DAILY_MESSAGES_PREMIUM,
             ),
             parse_mode=ParseMode.HTML,
             reply_markup=keyboard,
         )
     else:
         limits_text = S.SUBSCRIBE_FREE_USER_INFO.format(
-            free_translations=SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS,
+            free_messages=RATE_LIMITS.DAILY_MESSAGES_FREE,
             stars=plan["stars"],
-            premium_translations=plan["translation_limit"],
+            premium_messages=RATE_LIMITS.DAILY_MESSAGES_PREMIUM,
             days=plan["days"],
         )
 
@@ -144,6 +134,7 @@ async def handle_subscribe_callback(
     if query.data == "subscribe_show":
         user_id = update.effective_user.id
         is_premium = is_user_premium(user_id)
+        daily_used = get_user_daily_output_messages(user_id)
 
         plan = SUBSCRIPTION_PLAN
         button_text = f"{plan['title']} - {plan['stars']} Yulduz"
@@ -152,24 +143,19 @@ async def handle_subscribe_callback(
         )
 
         if is_premium:
-            subscription = get_user_subscription(user_id)
-            translation_remaining = (
-                subscription.get("translation_remaining", 0) if subscription else 0
-            )
-
             await query.message.reply_text(
-                f"<b>Qolgan limitlar:</b> {translation_remaining} ta tarjima\n\n"
+                f"<b>Bugungi foydalanish:</b> {daily_used}/{RATE_LIMITS.DAILY_MESSAGES_PREMIUM} ta xabar\n\n"
                 f"<b>Premium paket ({plan['stars']} Yulduz):</b>\n"
-                f"- {plan['translation_limit']} ta tarjima\n"
+                f"- kuniga {RATE_LIMITS.DAILY_MESSAGES_PREMIUM} ta xabar\n"
                 f"- {plan['days']} kun amal qiladi",
                 parse_mode=ParseMode.HTML,
                 reply_markup=keyboard,
             )
         else:
             limits_text = S.SUBSCRIBE_FREE_USER_INFO.format(
-                free_translations=SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS,
+                free_messages=RATE_LIMITS.DAILY_MESSAGES_FREE,
                 stars=plan["stars"],
-                premium_translations=plan["translation_limit"],
+                premium_messages=RATE_LIMITS.DAILY_MESSAGES_PREMIUM,
                 days=plan["days"],
             )
 
@@ -212,15 +198,12 @@ async def handle_stats_callback(
 
     user_id = update.effective_user.id
     is_premium = is_user_premium(user_id)
+    daily_used = get_user_daily_output_messages(user_id)
     plan = SUBSCRIPTION_PLAN
 
     if is_premium:
-        # Premium user: show remaining limits and option to buy more
         subscription = get_user_subscription(user_id)
         expires_at = subscription["expires_at"] if subscription else "N/A"
-        translation_remaining = (
-            subscription.get("translation_remaining", 0) if subscription else 0
-        )
 
         formatted_date = format_date_uzbek(expires_at)
         days_remaining = get_days_remaining(expires_at)
@@ -234,21 +217,13 @@ async def handle_stats_callback(
             S.STATS_PREMIUM.format(
                 days_remaining=days_remaining,
                 date=formatted_date,
-                translations=translation_remaining,
+                used=daily_used,
+                limit=RATE_LIMITS.DAILY_MESSAGES_PREMIUM,
             ),
             parse_mode=ParseMode.HTML,
             reply_markup=keyboard,
         )
     else:
-        # Free user: show remaining limits
-        subscription = get_user_subscription(user_id)
-
-        if subscription:
-            translation_remaining = subscription.get("translation_remaining", 0)
-        else:
-            # New user - show full free limits
-            translation_remaining = SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS
-
         button_text = f"{S.BTN_SUBSCRIBE} - {plan['stars']} Yulduz"
         keyboard = InlineKeyboardMarkup(
             [[InlineKeyboardButton(button_text, callback_data="subscribe_buy")]]
@@ -256,10 +231,10 @@ async def handle_stats_callback(
 
         await query.message.reply_text(
             S.STATS_FREE.format(
-                translations=translation_remaining,
-                free_translations=SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS,
+                used=daily_used,
+                limit=RATE_LIMITS.DAILY_MESSAGES_FREE,
                 stars=plan["stars"],
-                premium_translations=plan["translation_limit"],
+                premium_messages=RATE_LIMITS.DAILY_MESSAGES_PREMIUM,
                 days=plan["days"],
             ),
             parse_mode=ParseMode.HTML,
@@ -306,7 +281,6 @@ async def successful_payment_handler(
 
     plan = SUBSCRIPTION_PLAN
     days = plan["days"]
-    translation_limit = plan["translation_limit"]
 
     # Log the payment first (this creates the record for idempotency)
     if not log_payment(
@@ -320,15 +294,10 @@ async def successful_payment_handler(
         await update.message.reply_text(S.PAYMENT_LOG_ERROR)
         return
 
-    # Activate premium with limits
-    if activate_premium(user_id, days, translation_limit):
+    # Activate premium (translation_limit=0 since we use daily message counts now)
+    if activate_premium(user_id, days, 0):
         subscription = get_user_subscription(user_id)
         expires_at = subscription["expires_at"] if subscription else "N/A"
-        translation_remaining = (
-            subscription.get("translation_remaining", 0)
-            if subscription
-            else translation_limit
-        )
 
         formatted_date = format_date_uzbek(expires_at)
 
@@ -337,7 +306,7 @@ async def successful_payment_handler(
             f"{S.PAYMENT_SUBSCRIPTION_ACTIVATED}"
             f"{S.PAYMENT_EXPIRES_AT.format(date=formatted_date)}"
             f"{S.PAYMENT_YOUR_LIMITS}"
-            f"{S.PAYMENT_TRANSLATIONS_FORMAT.format(count=translation_remaining)}"
+            f"{S.PAYMENT_TRANSLATIONS_FORMAT.format(count=RATE_LIMITS.DAILY_MESSAGES_PREMIUM)}"
             f"{S.PAYMENT_THANK_YOU}",
             parse_mode=ParseMode.HTML,
         )

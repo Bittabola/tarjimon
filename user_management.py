@@ -1,16 +1,12 @@
 """
-User Session Management and Token-Based Rate Limiting
+User Session Management and Rate Limiting
 
-This module provides comprehensive user session management with token-based rate limiting
-to control API costs and ensure fair usage across all users.
+This module provides user session management with request rate limiting
+and content size validation.
 
 Features:
-- Token-based daily limits per user (20K tokens/day)
-- System-wide monthly token budgets (5M tokens/month)
 - Request rate limiting (10 requests/minute)
 - Content size validation
-- Real-time budget monitoring
-- Integration with existing database token logging
 - Session persistence across restarts
 """
 
@@ -21,10 +17,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime as dt, timezone
 import strings as S
-from config import (
-    logger,
-    MONTHLY_TOKEN_LIMITS,
-)
+from config import logger
 from constants import (
     RATE_LIMITS,
     TEXT_LIMITS,
@@ -32,7 +25,6 @@ from constants import (
     SESSION_CONSTANTS,
 )
 from database import (
-    DatabaseManager,
     save_user_session,
     load_user_session,
     delete_user_session,
@@ -42,14 +34,12 @@ from database import (
 
 @dataclass
 class UserSession:
-    """User session data structure with token tracking."""
+    """User session data structure."""
 
     user_id: int
     last_activity: float
     request_count: int
     request_timestamps: deque = field(default_factory=lambda: deque(maxlen=60))
-    daily_token_usage: int = 0
-    daily_reset_time: float = 0.0
 
     def to_dict(self) -> dict:
         """Convert session to dictionary for serialization."""
@@ -58,8 +48,6 @@ class UserSession:
             "last_activity": self.last_activity,
             "request_count": self.request_count,
             "request_timestamps": list(self.request_timestamps),
-            "daily_token_usage": self.daily_token_usage,
-            "daily_reset_time": self.daily_reset_time,
         }
 
     @classmethod
@@ -69,8 +57,6 @@ class UserSession:
             user_id=data["user_id"],
             last_activity=data["last_activity"],
             request_count=data["request_count"],
-            daily_token_usage=data.get("daily_token_usage", 0),
-            daily_reset_time=data.get("daily_reset_time", 0.0),
         )
         # Restore request timestamps
         timestamps = data.get("request_timestamps", [])
@@ -79,146 +65,16 @@ class UserSession:
         return session
 
 
-class TokenBudgetManager:
-    """Manages system-wide token budgets and limits."""
-
-    def __init__(self):
-        self.monthly_limits = MONTHLY_TOKEN_LIMITS
-        self.db_manager = DatabaseManager()
-
-    def get_monthly_usage(self, service: str = None) -> int:
-        """Get current month's token usage from database."""
-        try:
-            with self.db_manager.get_connection() as conn:
-                cursor = conn.cursor()
-
-                # Get first day of current month in UTC
-                now = dt.now(timezone.utc)
-                first_day = now.replace(
-                    day=1, hour=0, minute=0, second=0, microsecond=0
-                )
-                first_day_iso = first_day.strftime("%Y-%m-%dT%H:%M:%S")
-
-                if service:
-                    # Map service names to database patterns
-                    if service == "gemini":
-                        # Match all gemini services
-                        cursor.execute(
-                            """
-                            SELECT COALESCE(SUM(token_count), 0) as total_tokens
-                            FROM api_token_usage 
-                            WHERE service_name LIKE 'gemini%' AND timestamp_utc >= ?
-                        """,
-                            (first_day_iso,),
-                        )
-                    else:
-                        # Exact match for other services
-                        cursor.execute(
-                            """
-                            SELECT COALESCE(SUM(token_count), 0) as total_tokens
-                            FROM api_token_usage 
-                            WHERE service_name = ? AND timestamp_utc >= ?
-                        """,
-                            (
-                                service,
-                                first_day_iso,
-                            ),
-                        )
-                else:
-                    # Get total usage across all services
-                    cursor.execute(
-                        """
-                        SELECT COALESCE(SUM(token_count), 0) as total_tokens
-                        FROM api_token_usage 
-                        WHERE timestamp_utc >= ?
-                    """,
-                        (first_day_iso,),
-                    )
-
-                result = cursor.fetchone()
-                total = result[0] if result else 0
-
-                logger.debug(f"Monthly usage for {service or 'all'}: {total} tokens")
-                return total
-
-        except Exception as e:
-            logger.error(f"Error getting monthly usage for {service}: {e}")
-            return 0
-
-    def check_monthly_budget(
-        self, service: str, tokens_needed: int
-    ) -> tuple[bool, str | None]:
-        """Check if token request fits within monthly budget."""
-        service_key = "gemini" if service.startswith("gemini") else service
-        current_usage = (
-            self.get_monthly_usage(service_key)
-            if service_key in self.monthly_limits
-            else 0
-        )
-        total_usage = self.get_monthly_usage()
-
-        # Check service-specific limit
-        if (
-            service_key in self.monthly_limits
-            and current_usage + tokens_needed > self.monthly_limits[service_key]
-        ):
-            remaining = max(0, self.monthly_limits[service_key] - current_usage)
-            error_msg = S.MONTHLY_SERVICE_LIMIT.format(
-                service="Gemini",
-                used=current_usage,
-                limit=self.monthly_limits[service_key],
-                remaining=remaining,
-            )
-            return False, error_msg
-
-        # Check total system limit
-        if total_usage + tokens_needed > self.monthly_limits["total"]:
-            remaining = max(0, self.monthly_limits["total"] - total_usage)
-            error_msg = S.MONTHLY_SYSTEM_LIMIT.format(
-                used=total_usage,
-                limit=self.monthly_limits["total"],
-                remaining=remaining,
-            )
-            return False, error_msg
-
-        return True, None
-
-    def get_budget_status(self) -> dict:
-        """Get current budget status for all services.
-
-        Caches the usage values to avoid redundant database queries.
-        """
-        # Cache usage values to avoid multiple database queries
-        gemini_used = self.get_monthly_usage("gemini")
-        total_used = self.get_monthly_usage()
-
-        return {
-            "gemini": {
-                "used": gemini_used,
-                "limit": self.monthly_limits["gemini"],
-                "remaining": max(0, self.monthly_limits["gemini"] - gemini_used),
-            },
-            "total": {
-                "used": total_used,
-                "limit": self.monthly_limits["total"],
-                "remaining": max(0, self.monthly_limits["total"] - total_used),
-            },
-        }
-
-
 class UserManager:
-    """Manages user sessions and token-based rate limiting with database persistence."""
+    """Manages user sessions and rate limiting with database persistence."""
 
     def __init__(self):
         self.sessions: dict[int, UserSession] = {}
         self.rate_limits = {
             "requests_per_minute": RATE_LIMITS.REQUESTS_PER_MINUTE,
-            "daily_tokens_per_user": RATE_LIMITS.DAILY_TOKENS_PER_USER,
             "max_text_length": TEXT_LIMITS.MAX_TEXT_LENGTH,
             "max_image_size_mb": IMAGE_LIMITS.MAX_IMAGE_SIZE_MB,
         }
-        self.budget_manager = TokenBudgetManager()
-        self.db_manager = DatabaseManager()
         self._persist_interval = 60  # Persist sessions every 60 seconds
         self._last_persist_time = time.time()
         self._persist_lock = threading.Lock()  # Prevent concurrent persist operations
@@ -230,9 +86,6 @@ class UserManager:
             last_activity_iso = dt.fromtimestamp(
                 session.last_activity, tz=timezone.utc
             ).isoformat()
-            daily_reset_iso = dt.fromtimestamp(
-                session.daily_reset_time, tz=timezone.utc
-            ).isoformat()
 
             # Convert request timestamps to JSON
             timestamps_json = json.dumps(list(session.request_timestamps))
@@ -241,8 +94,6 @@ class UserManager:
                 user_id=session.user_id,
                 last_activity=last_activity_iso,
                 request_count=session.request_count,
-                daily_token_usage=session.daily_token_usage,
-                daily_reset_time=daily_reset_iso,
                 request_timestamps=timestamps_json,
             )
         except Exception as e:
@@ -257,7 +108,6 @@ class UserManager:
 
             # Parse ISO timestamps back to floats
             last_activity = dt.fromisoformat(data["last_activity"]).timestamp()
-            daily_reset_time = dt.fromisoformat(data["daily_reset_time"]).timestamp()
 
             # Parse request timestamps from JSON
             request_timestamps_list: list[float] = []
@@ -271,8 +121,6 @@ class UserManager:
                 user_id=user_id,
                 last_activity=last_activity,
                 request_count=data["request_count"],
-                daily_token_usage=data["daily_token_usage"],
-                daily_reset_time=daily_reset_time,
             )
 
             # Restore request timestamps
@@ -309,29 +157,14 @@ class UserManager:
 
             if not db_session:
                 # Create new session
-                daily_usage = self._get_daily_token_usage(user_id)
-
                 self.sessions[user_id] = UserSession(
                     user_id=user_id,
                     last_activity=current_time,
                     request_count=0,
-                    daily_token_usage=daily_usage,
-                    daily_reset_time=current_time,
                 )
-                logger.info(
-                    f"Created new session for user {user_id}, daily tokens: {daily_usage}"
-                )
+                logger.info(f"Created new session for user {user_id}")
 
         session = self.sessions[user_id]
-
-        # Reset daily counter if needed (24 hours)
-        if current_time - session.daily_reset_time > 86400:
-            session.daily_token_usage = self._get_daily_token_usage(user_id)
-            session.daily_reset_time = current_time
-            logger.info(
-                f"Reset daily counter for user {user_id}, tokens: {session.daily_token_usage}"
-            )
-
         session.last_activity = current_time
 
         # Periodically persist active sessions (thread-safe)
@@ -346,66 +179,6 @@ class UserManager:
         """Persist all active sessions to the database."""
         for session in self.sessions.values():
             self._persist_session(session)
-
-    def _get_daily_token_usage(self, user_id: int) -> int:
-        """Get user's token usage for today from database."""
-        try:
-            with self.db_manager.get_connection() as conn:
-                cursor = conn.cursor()
-
-                # Get start of today in UTC
-                now = dt.now(timezone.utc)
-                today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-                today_start_iso = today_start.strftime("%Y-%m-%dT%H:%M:%S")
-
-                cursor.execute(
-                    """
-                    SELECT COALESCE(SUM(token_count), 0) as daily_tokens
-                    FROM api_token_usage 
-                    WHERE user_id = ? AND timestamp_utc >= ?
-                """,
-                    (user_id, today_start_iso),
-                )
-
-                result = cursor.fetchone()
-                daily_total = result[0] if result else 0
-
-                logger.debug(f"Daily token usage for user {user_id}: {daily_total}")
-                return daily_total
-
-        except Exception as e:
-            logger.error(f"Error getting daily token usage for user {user_id}: {e}")
-            return 0
-
-    def check_token_limits(
-        self, user_id: int, service: str, estimated_tokens: int
-    ) -> tuple[bool, str | None]:
-        """Check if user can use the estimated tokens."""
-        session = self.get_or_create_session(user_id)
-
-        # Check user's daily limit
-        if (
-            session.daily_token_usage + estimated_tokens
-            > self.rate_limits["daily_tokens_per_user"]
-        ):
-            remaining = max(
-                0, self.rate_limits["daily_tokens_per_user"] - session.daily_token_usage
-            )
-            error_msg = S.DAILY_TOKEN_LIMIT_EXCEEDED.format(
-                used=session.daily_token_usage,
-                limit=self.rate_limits["daily_tokens_per_user"],
-                remaining=remaining,
-            )
-            return False, error_msg
-
-        # Check system monthly budget
-        budget_ok, budget_msg = self.budget_manager.check_monthly_budget(
-            service, estimated_tokens
-        )
-        if not budget_ok:
-            return False, budget_msg
-
-        return True, None
 
     def check_rate_limit(self, user_id: int) -> tuple[bool, str | None]:
         """Check if user has exceeded request rate limits."""
@@ -439,23 +212,6 @@ class UserManager:
             )
             return False, error_msg
         return True, None
-
-    def estimate_tokens(self, text: str) -> int:
-        """Estimate token count for text (rough approximation)."""
-        # Rough estimation: 1 token ≈ 4 characters
-        # Add 10% buffer for Gemini overhead
-        base_estimate = len(text) // 4
-        return int(base_estimate * 1.1)
-
-    def record_token_usage(self, user_id: int, tokens_used: int):
-        """Record actual token usage for a user and persist."""
-        session = self.get_or_create_session(user_id)
-        session.daily_token_usage += tokens_used
-        logger.debug(
-            f"User {user_id} token usage updated: +{tokens_used}, total today: {session.daily_token_usage}"
-        )
-        # Persist session after token usage update
-        self._persist_session(session)
 
     def cleanup_inactive_sessions(self) -> int:
         """

@@ -8,7 +8,6 @@ import time
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -20,15 +19,12 @@ from config import (
     SUBSCRIPTION_PLAN,
     PROMPTS,
 )
-from constants import IMAGE_LIMITS, SUBSCRIPTION_LIMITS, RETRY_CONSTANTS, API_TIMEOUTS, STREAMING_CONSTANTS
+from constants import IMAGE_LIMITS, RATE_LIMITS, RETRY_CONSTANTS, API_TIMEOUTS, STREAMING_CONSTANTS
 from google.genai import errors as genai_errors
 from database import (
     log_token_usage_to_db,
     is_user_premium,
-    get_user_subscription,
-    get_user_remaining_limits,
-    decrement_translation_limit,
-    increment_translation_limit,
+    get_user_daily_output_messages,
 )
 from user_management import user_manager
 import strings as S
@@ -39,7 +35,6 @@ from .common import (
     get_gemini_client,
     get_stats_button,
     log_error_with_context,
-    ensure_free_user_sub,
     split_message,
 )
 
@@ -67,12 +62,7 @@ _GENERATION_CONFIG = types.GenerateContentConfig(
 
 @dataclass(frozen=True, slots=True)
 class TranslationDeps:
-    ensure_subscription: Callable[[int], Any]
-    reserve_quota: Callable[[int], bool]
-    refund_quota: Callable[[int, int], bool]
     translate: Callable[..., Awaitable[tuple[str, int, int, int]]]
-    log_usage: Callable[..., Any]
-    record_session_usage: Callable[[int, int], None]
     log_error: Callable[..., None]
 
 
@@ -92,10 +82,9 @@ async def execute_translation(
     text_input: str | None,
     image_data: bytes | None,
     image_mime_type: str,
-    is_premium: bool,
     deps: TranslationDeps,
 ) -> TranslationResult:
-    """Pure business logic for translation: reserve, call API, refund on failure, log."""
+    """Pure business logic for translation: call API, return result."""
     # Determine content type
     if image_data and text_input:
         content_type = "image_with_caption"
@@ -104,26 +93,13 @@ async def execute_translation(
     else:
         content_type = "text"
 
-    # Ensure free user has subscription record
-    if not is_premium:
-        deps.ensure_subscription(user_id)
-
-    # Reserve one translation credit
-    if not deps.reserve_quota(user_id):
-        return TranslationResult(success=False)
-
     # Call the translation API
-    try:
-        translated_text, token_count, input_tokens, output_tokens = (
-            await deps.translate(user_id, text_input, image_data, image_mime_type)
-        )
-    except Exception:
-        deps.refund_quota(user_id, 1)
-        raise
+    translated_text, token_count, input_tokens, output_tokens = (
+        await deps.translate(user_id, text_input, image_data, image_mime_type)
+    )
 
-    # Refund if generation failed
+    # Check if generation failed
     if token_count <= 0 or translated_text in _TRANSLATION_ERROR_STRINGS:
-        deps.refund_quota(user_id, 1)
         return TranslationResult(
             success=False,
             translated_text=translated_text,
@@ -132,19 +108,6 @@ async def execute_translation(
             output_tokens=output_tokens,
             content_type=content_type,
         )
-
-    # Log usage on success
-    deps.log_usage(
-        user_id,
-        "gemini",
-        token_count,
-        is_translation=True,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        content_type=content_type,
-        content_preview=text_input[:200] if text_input else None,
-    )
-    deps.record_session_usage(user_id, token_count)
 
     return TranslationResult(
         success=True,
@@ -158,12 +121,7 @@ async def execute_translation(
 
 def _default_translation_deps() -> TranslationDeps:
     return TranslationDeps(
-        ensure_subscription=ensure_free_user_sub,
-        reserve_quota=decrement_translation_limit,
-        refund_quota=increment_translation_limit,
         translate=_perform_single_model_translation,
-        log_usage=log_token_usage_to_db,
-        record_session_usage=user_manager.record_token_usage,
         log_error=log_error_with_context,
     )
 
@@ -702,14 +660,14 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         return
 
-    # Check limits based on subscription tier
+    # Check daily message limit
     is_premium = is_user_premium(user_id)
+    daily_used = get_user_daily_output_messages(user_id)
+    daily_limit = RATE_LIMITS.DAILY_MESSAGES_PREMIUM if is_premium else RATE_LIMITS.DAILY_MESSAGES_FREE
 
-    if is_premium:
-        # Premium users: check remaining total limits
-        remaining = get_user_remaining_limits(user_id)
-        if remaining["translation_remaining"] <= 0:
-            plan = SUBSCRIPTION_PLAN
+    if daily_used >= daily_limit:
+        plan = SUBSCRIPTION_PLAN
+        if is_premium:
             button_text = f"{S.BTN_INCREASE_LIMIT} - {plan['stars']} Yulduz"
             keyboard = InlineKeyboardMarkup(
                 [[InlineKeyboardButton(button_text, callback_data="subscribe_buy")]]
@@ -718,25 +676,12 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 chat_id=update.effective_chat.id,
                 message_id=status_message.message_id,
                 text=S.TRANSLATION_LIMIT_EXCEEDED_PREMIUM.format(
-                    stars=plan["stars"],
-                    translation_limit=plan["translation_limit"],
-                    days=plan["days"],
+                    premium_limit=RATE_LIMITS.DAILY_MESSAGES_PREMIUM,
                 ),
                 parse_mode=ParseMode.HTML,
                 reply_markup=keyboard,
             )
-            return
-    else:
-        # Free users: check remaining limits
-        subscription = get_user_subscription(user_id)
-
-        if subscription:
-            translation_remaining = subscription.get("translation_remaining", 0)
         else:
-            translation_remaining = SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS
-
-        if translation_remaining <= 0:
-            plan = SUBSCRIPTION_PLAN
             button_text = f"{S.BTN_SUBSCRIBE} - {plan['stars']} Yulduz"
             keyboard = InlineKeyboardMarkup(
                 [[InlineKeyboardButton(button_text, callback_data="subscribe_buy")]]
@@ -745,15 +690,15 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 chat_id=update.effective_chat.id,
                 message_id=status_message.message_id,
                 text=S.TRANSLATION_LIMIT_EXCEEDED_FREE.format(
-                    free_limit=SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS,
+                    free_limit=RATE_LIMITS.DAILY_MESSAGES_FREE,
                     stars=plan["stars"],
-                    translation_limit=plan["translation_limit"],
+                    premium_limit=RATE_LIMITS.DAILY_MESSAGES_PREMIUM,
                     days=plan["days"],
                 ),
                 parse_mode=ParseMode.HTML,
                 reply_markup=keyboard,
             )
-            return
+        return
 
     text_input = None
     image_data = None
@@ -830,25 +775,6 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 )
                 return
 
-        # Budget guardrail before model call.
-        estimated_tokens = user_manager.estimate_tokens(text_input or "")
-        if image_data:
-            # OCR and multimodal requests are significantly more expensive than text-only.
-            estimated_tokens += 6000
-
-        budget_ok, budget_error = user_manager.check_token_limits(
-            user_id=user_id,
-            service="gemini",
-            estimated_tokens=estimated_tokens,
-        )
-        if not budget_ok:
-            await context.bot.edit_message_text(
-                chat_id=update.effective_chat.id,
-                message_id=status_message.message_id,
-                text=budget_error,
-            )
-            return
-
         # Use streaming for text_only and image_only; text_with_image needs
         # the complete response for structured IMAGE_TEXT/CAPTION_TEXT parsing.
         is_streamable = not (image_data and text_input)
@@ -869,25 +795,19 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 )
 
             deps = TranslationDeps(
-                ensure_subscription=ensure_free_user_sub,
-                reserve_quota=decrement_translation_limit,
-                refund_quota=increment_translation_limit,
                 translate=_streaming_translate,
-                log_usage=log_token_usage_to_db,
-                record_session_usage=user_manager.record_token_usage,
                 log_error=log_error_with_context,
             )
         else:
             deps = _default_translation_deps()
 
-        # Execute the core translation logic (reserve → translate → refund/log).
+        # Execute the core translation logic.
         try:
             result = await execute_translation(
                 user_id=user_id,
                 text_input=text_input,
                 image_data=image_data,
                 image_mime_type=image_mime_type,
-                is_premium=is_premium,
                 deps=deps,
             )
         except Exception as e:
@@ -933,6 +853,19 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
         if len(parts) > 1:
             logger.info(f"Translation split into {len(parts)} parts")
+
+        # Log usage with output message count
+        log_token_usage_to_db(
+            user_id,
+            "gemini",
+            result.token_count,
+            is_translation=True,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            content_type=result.content_type,
+            content_preview=text_input[:200] if text_input else None,
+            output_messages=len(parts),
+        )
 
         # Edit the status message with the first part
         first_markup = stats_keyboard if len(parts) == 1 else None

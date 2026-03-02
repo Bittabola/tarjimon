@@ -13,7 +13,6 @@ from __future__ import annotations
 # Re-export common utilities
 from .common import (
     get_gemini_client,
-    ensure_free_user_sub,
     get_stats_button,
     log_error_with_context,
 )
@@ -45,7 +44,6 @@ from .feedback import (
 __all__ = [
     # Common utilities
     "get_gemini_client",
-    "ensure_free_user_sub",
     "get_stats_button",
     "log_error_with_context",
     # Translation

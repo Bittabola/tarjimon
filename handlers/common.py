@@ -15,12 +15,10 @@ from config import (
 from constants import (
     TELEGRAM_CONSTANTS,
     ERROR_LOG_CONSTANTS,
-    SUBSCRIPTION_LIMITS,
 )
 from database import (
     log_error_to_db,
     is_user_premium,
-    ensure_free_user_subscription,
 )
 import strings as S
 from google import genai
@@ -39,17 +37,6 @@ def get_gemini_client() -> genai.Client:
             if _gemini_client is None:
                 _gemini_client = genai.Client(api_key=GEMINI_API_KEY)
     return _gemini_client
-
-
-def ensure_free_user_sub(user_id: int) -> None:
-    """
-    Ensure a free user has a subscription record with initial limits.
-    This is called when a free user uses the service for the first time.
-    """
-    ensure_free_user_subscription(
-        user_id,
-        translations=SUBSCRIPTION_LIMITS.FREE_TRANSLATIONS,
-    )
 
 
 def get_stats_button(user_id: int) -> InlineKeyboardMarkup:

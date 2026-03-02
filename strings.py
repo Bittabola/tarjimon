@@ -12,17 +12,6 @@ from typing import Final
 # RATE LIMIT ERRORS
 # =============================================================================
 
-DAILY_TOKEN_LIMIT_EXCEEDED: Final[str] = """Kunlik limit tugadi
-
-Siz bir kun uchun ajratilgan barcha limitni ishlatib bo'ldingiz. Yangi limitlar ertaga taqdim etiladi.
-
-Kunlik statistika:
-Ishlatildi: {used:,} birlik
-Limit: {limit:,} birlik
-Qoldi: {remaining:,} birlik
-
-Xizmatdan foydalanishni ertaga yangi limitlar bilan davom ettirishingiz mumkin. Sabringiz uchun rahmat!"""
-
 TOO_MANY_REQUESTS: Final[str] = """Juda ko'p so'rov yuborildi
 
 Siz qisqa vaqt ichida botga haddan tashqari ko'p so'rov yubordingiz. Iltimos, biroz sekinroq.
@@ -33,27 +22,19 @@ Ruxsat etilgan: {limit} ta so'rov (daqiqasiga)
 
 Iltimos, bir necha soniya kuting va qaytadan urinib ko'ring."""
 
-MONTHLY_SERVICE_LIMIT: Final[str] = """{service} uchun oylik limit tugadi
+DAILY_MESSAGE_LIMIT_FREE: Final[str] = """Kunlik limit tugadi
 
-Ushbu oyda {service} xizmati uchun ajratilgan limit to'liq sarflandi. Afsuski, hozircha yangi so'rovlarni qabul qila olmaymiz.
+Bugun siz {used}/{limit} ta xabar limitini ishlatdingiz.
 
-Oylik statistika:
-Ishlatildi: {used:,} birlik
-Limit: {limit:,} birlik
-Qoldi: {remaining:,} birlik
+Premium paket ({stars} Yulduz) bilan kuniga {premium_limit} ta xabar yuborishingiz mumkin.
 
-Limitlar keyingi oyda yangilanadi. Agar shoshilinch savollaringiz bo'lsa, administrator bilan bog'laning."""
+Yangi limitlar ertaga taqdim etiladi."""
 
-MONTHLY_SYSTEM_LIMIT: Final[str] = """Botning umumiy oylik limiti tugadi
+DAILY_MESSAGE_LIMIT_PREMIUM: Final[str] = """Kunlik limit tugadi
 
-Ushbu oyda bot uchun ajratilgan umumiy limit to'liq sarflandi. Afsuski, hozircha yangi so'rovlarni qabul qila olmaymiz.
+Bugun siz {used}/{limit} ta xabar limitini ishlatdingiz.
 
-Umumiy statistika:
-Ishlatildi: {used:,} birlik
-Limit: {limit:,} birlik
-Qoldi: {remaining:,} birlik
-
-Limitlar keyingi oyda yangilanadi. Agar shoshilinch savollaringiz bo'lsa, administrator bilan bog'laning."""
+Yangi limitlar ertaga taqdim etiladi. Sabringiz uchun rahmat!"""
 
 
 # =============================================================================
@@ -87,19 +68,18 @@ SEND_TEXT_OR_IMAGE: Final[str] = "Iltimos, matnli xabar yoki rasm yuboring."
 # SUBSCRIPTION ERRORS
 # =============================================================================
 
-TRANSLATION_LIMIT_EXCEEDED_FREE: Final[str] = """Tarjima limiti tugadi.
+TRANSLATION_LIMIT_EXCEEDED_FREE: Final[str] = """Kunlik limit tugadi.
 
-Bepul limit: oyiga {free_limit} ta.
-
-Premium paket ({stars} Yulduz):
-- {translation_limit} ta tarjima
-- {days} kun amal qiladi"""
-
-TRANSLATION_LIMIT_EXCEEDED_PREMIUM: Final[str] = """Tarjima limiti tugadi.
+Bepul limit: kuniga {free_limit} ta xabar.
 
 Premium paket ({stars} Yulduz):
-- {translation_limit} ta tarjima
+- kuniga {premium_limit} ta xabar
 - {days} kun amal qiladi"""
+
+TRANSLATION_LIMIT_EXCEEDED_PREMIUM: Final[str] = """Kunlik limit tugadi.
+
+Premium limit: kuniga {premium_limit} ta xabar.
+Yangi limitlar ertaga taqdim etiladi."""
 
 INVALID_PLAN: Final[str] = "Noto'g'ri obuna turi."
 
@@ -187,7 +167,7 @@ PAYMENT_SUCCESS_TITLE: Final[str] = "<b>To'lov muvaffaqiyatli amalga oshirildi!<
 PAYMENT_SUBSCRIPTION_ACTIVATED: Final[str] = "Premium obuna faollashtirildi.\n"
 PAYMENT_EXPIRES_AT: Final[str] = "Amal qilish muddati: <b>{date}</b> gacha\n\n"
 PAYMENT_YOUR_LIMITS: Final[str] = "<b>Sizning limitlaringiz:</b>\n"
-PAYMENT_TRANSLATIONS_FORMAT: Final[str] = "- {count} ta tarjima\n\n"
+PAYMENT_TRANSLATIONS_FORMAT: Final[str] = "- kuniga {count} ta xabar\n\n"
 PAYMENT_THANK_YOU: Final[str] = "Xizmatdan foydalanganingiz uchun rahmat!"
 
 
@@ -201,16 +181,16 @@ WELCOME_MESSAGE: Final[str] = """Salom! Men sizga quyidagi xizmatlarni taklif qi
 
 {status_text}
 
-<b>Bepul reja:</b> {free_translations} ta tarjima (30 kun)
-<b>Premium:</b> {premium_translations} ta tarjima (30 kun)
+<b>Bepul reja:</b> kuniga {free_messages} ta xabar
+<b>Premium:</b> kuniga {premium_messages} ta xabar
 
 <i>Xizmat Google serverlaridagi Gemini modeli asosida ishlaydi.</i>"""
 
 STATUS_PREMIUM: Final[str] = """<b>Premium obuna:</b> {date} gacha
-Qolgan limitlar: {translations} ta tarjima"""
+Bugungi foydalanish: {used}/{limit} ta xabar"""
 
 STATUS_FREE: Final[str] = """<b>Bepul reja</b>
-Qolgan limitlar: {translations} ta tarjima"""
+Bugungi foydalanish: {used}/{limit} ta xabar"""
 
 
 # =============================================================================
@@ -222,15 +202,15 @@ SUBSCRIBE_HEADING: Final[str] = "<b>Premiumga o'tish</b>"
 SUBSCRIBE_PREMIUM_USER_INFO: Final[str] = """<b>Sizda premium obuna mavjud!</b>
 
 Amal qilish muddati: {days_remaining} kun (<b>{date}</b> gacha)
-Qolgan limitlar: {translations} ta tarjima
+Bugungi foydalanish: {used}/{limit} ta xabar
 
-Limitlarni oshirish uchun yangi paket xarid qilishingiz mumkin:"""
+Obunani uzaytirish uchun yangi paket xarid qilishingiz mumkin:"""
 
 SUBSCRIBE_FREE_USER_INFO: Final[str] = """<b>Bepul reja:</b>
-- oyiga {free_translations} ta tarjima
+- kuniga {free_messages} ta xabar
 
 <b>Premium paket ({stars} Yulduz):</b>
-- {premium_translations} ta tarjima
+- kuniga {premium_messages} ta xabar
 - {days} kun amal qiladi"""
 
 
@@ -242,18 +222,18 @@ STATS_PREMIUM: Final[str] = """<b>Premium obuna</b>
 
 Amal qilish muddati: {days_remaining} kun (<b>{date}</b> gacha)
 
-<b>Qolgan limitlar:</b>
-- {translations} ta tarjima
+<b>Bugungi foydalanish:</b>
+- {used}/{limit} ta xabar
 
-Limitlarni oshirish uchun yangi paket xarid qiling:"""
+Obunani uzaytirish uchun yangi paket xarid qiling:"""
 
 STATS_FREE: Final[str] = """<b>Bepul reja</b>
 
-<b>Qolgan limitlar (oylik):</b>
-- {translations}/{free_translations} ta tarjima
+<b>Bugungi foydalanish:</b>
+- {used}/{limit} ta xabar
 
 <b>Premium paket ({stars} Yulduz):</b>
-- {premium_translations} ta tarjima
+- kuniga {premium_messages} ta xabar
 - {days} kun amal qiladi"""
 
 
@@ -264,7 +244,7 @@ STATS_FREE: Final[str] = """<b>Bepul reja</b>
 PLAN_TITLE: Final[str] = "Premium paket"
 
 PLAN_DESCRIPTION: Final[str] = (
-    "{translations} ta tarjima, {days} kun"
+    "kuniga {daily_messages} ta xabar, {days} kun"
 )
 
 

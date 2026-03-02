@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 # Import constants from constants module
 from constants import (
+    RATE_LIMITS,
     SUBSCRIPTION_LIMITS,
     PRICING_CONSTANTS,
     MONTHS_UZ,
@@ -75,13 +76,6 @@ TARJIMON_LOG_PATH = os.environ.get("TARJIMON_LOG_PATH", "logs")
 # SQLite database file in the chosen database directory
 DATABASE_FILE = os.path.join(TARJIMON_DB_PATH, "tracking_data.db")
 
-# --- Token Budget Management ---
-# Monthly token limits for cost control
-MONTHLY_TOKEN_LIMITS = {
-    "gemini": 5_000_000,  # 5M tokens per month (Gemini only)
-    "total": 5_000_000,  # 5M tokens total per month
-}
-
 # --- Revenue Settings (computed from constants) ---
 NET_REVENUE_PER_STAR = PRICING_CONSTANTS.STARS_TO_USD * (
     1 - PRICING_CONSTANTS.TELEGRAM_FEE_PERCENT / 100
@@ -89,7 +83,9 @@ NET_REVENUE_PER_STAR = PRICING_CONSTANTS.STARS_TO_USD * (
 
 # Premium package value breakdown for amortized P/L calculation
 _PREMIUM_NET_REVENUE = SUBSCRIPTION_LIMITS.PREMIUM_PRICE_STARS * NET_REVENUE_PER_STAR
-REVENUE_PER_TRANSLATION = _PREMIUM_NET_REVENUE / SUBSCRIPTION_LIMITS.PREMIUM_TRANSLATIONS
+REVENUE_PER_TRANSLATION = _PREMIUM_NET_REVENUE / (
+    RATE_LIMITS.DAILY_MESSAGES_PREMIUM * SUBSCRIPTION_LIMITS.PREMIUM_PERIOD_DAYS
+)
 
 # Subscription plan (Stars pricing)
 SUBSCRIPTION_PLAN = {
@@ -97,10 +93,9 @@ SUBSCRIPTION_PLAN = {
     "days": SUBSCRIPTION_LIMITS.PREMIUM_PERIOD_DAYS,
     "title": S.PLAN_TITLE,
     "description": S.PLAN_DESCRIPTION.format(
-        translations=SUBSCRIPTION_LIMITS.PREMIUM_TRANSLATIONS,
+        daily_messages=RATE_LIMITS.DAILY_MESSAGES_PREMIUM,
         days=SUBSCRIPTION_LIMITS.PREMIUM_PERIOD_DAYS,
     ),
-    "translation_limit": SUBSCRIPTION_LIMITS.PREMIUM_TRANSLATIONS,
 }
 
 

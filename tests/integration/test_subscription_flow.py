@@ -5,10 +5,10 @@ Tests:
 2. /start for premium user -- reply contains "Premium"
 3. /subscribe command -- reply contains "Yulduz" or "Premium"
 4. subscribe_buy callback -- context.bot.send_invoice called
-5. stats_show callback for free user -- reply with remaining limits (contains "10")
+5. stats_show callback for free user -- reply with daily usage info
 6. pre-checkout with valid plan -- query.answer(ok=True)
 7. pre-checkout with invalid plan -- query.answer(ok=False, ...)
-8. successful payment -- activates premium, correct translation limit
+8. successful payment -- activates premium
 9. duplicate payment -- second reply contains "allaqachon"
 """
 
@@ -56,7 +56,7 @@ async def test_start_command_free_user(tmp_db):
 async def test_start_command_premium_user(tmp_db):
     """Premium user /start reply contains 'Premium'."""
     user_id = 2
-    database.activate_premium(user_id, days=30, translation_limit=50)
+    database.activate_premium(user_id, days=30, translation_limit=0)
 
     update, ctx = make_command_update(command="/start", user_id=user_id)
 
@@ -103,9 +103,8 @@ async def test_subscribe_buy_callback_sends_invoice(tmp_db):
 
 
 async def test_stats_show_callback_free_user(tmp_db):
-    """stats_show for a free user shows remaining limits (contains '10')."""
+    """stats_show for a free user shows daily usage info (contains '0/')."""
     user_id = 5
-    database.ensure_free_user_subscription(user_id, translations=10)
 
     update, ctx = make_callback_query_update(data="stats_show", user_id=user_id)
 
@@ -113,7 +112,8 @@ async def test_stats_show_callback_free_user(tmp_db):
 
     update.callback_query.message.reply_text.assert_awaited_once()
     text = update.callback_query.message.reply_text.call_args[0][0]
-    assert "10" in text
+    # Should show daily usage like "0/10"
+    assert "0/" in text or "xabar" in text.lower()
 
 
 # ------------------------------------------------------------------
@@ -152,7 +152,7 @@ async def test_pre_checkout_invalid_plan(tmp_db):
 
 
 async def test_successful_payment_activates_premium(tmp_db):
-    """Payment activates premium with correct limits (50 translations)."""
+    """Payment activates premium subscription."""
     user_id = 1
 
     update, ctx = make_payment_update(
@@ -164,10 +164,6 @@ async def test_successful_payment_activates_premium(tmp_db):
     await successful_payment_handler(update, ctx)
 
     assert database.is_user_premium(user_id) is True
-
-    sub = database.get_user_subscription(user_id)
-    assert sub is not None
-    assert sub["translation_remaining"] == 50
 
 
 # ------------------------------------------------------------------

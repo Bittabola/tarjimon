@@ -101,7 +101,8 @@ def init_db():
                 output_tokens INTEGER DEFAULT 0,
                 cost_usd REAL DEFAULT 0.0,
                 content_type TEXT DEFAULT NULL,
-                content_preview TEXT DEFAULT NULL
+                content_preview TEXT DEFAULT NULL,
+                output_messages INTEGER DEFAULT 1
             )
             """)
 
@@ -236,6 +237,10 @@ def init_db():
                     "content_preview",
                     "ALTER TABLE api_token_usage ADD COLUMN content_preview TEXT DEFAULT NULL",
                 ),
+                (
+                    "output_messages",
+                    "ALTER TABLE api_token_usage ADD COLUMN output_messages INTEGER DEFAULT 1",
+                ),
             ]:
                 try:
                     cursor.execute(sql)
@@ -261,6 +266,7 @@ def log_token_usage_to_db(
     output_tokens: int = 0,
     content_type: str | None = None,
     content_preview: str | None = None,
+    output_messages: int = 1,
 ) -> int | None:
     """Log token usage to SQLite database with improved error handling and cost tracking.
 
@@ -273,6 +279,7 @@ def log_token_usage_to_db(
         output_tokens: Number of output tokens (for cost calculation)
         content_type: Type of content (text, image, etc.)
         content_preview: Preview of content (truncated)
+        output_messages: Number of Telegram output messages sent for this translation
 
     Returns:
         The inserted row ID, or None if logging failed
@@ -303,8 +310,8 @@ def log_token_usage_to_db(
 
             cursor.execute(
                 """
-            INSERT INTO api_token_usage (timestamp_utc, user_id, service_name, token_count, is_translation_related, input_tokens, output_tokens, cost_usd, content_type, content_preview)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO api_token_usage (timestamp_utc, user_id, service_name, token_count, is_translation_related, input_tokens, output_tokens, cost_usd, content_type, content_preview, output_messages)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     timestamp_utc,
@@ -317,6 +324,7 @@ def log_token_usage_to_db(
                     cost_usd,
                     content_type,
                     content_preview[:500] if content_preview else None,
+                    output_messages,
                 ),
             )
 
@@ -453,6 +461,50 @@ def get_user_daily_translation_count(user_id: int) -> int:
         return 0
     except Exception as ex:
         logger.error(f"Unexpected error in get_user_daily_translation_count: {ex}")
+        return 0
+
+
+def get_user_daily_output_messages(user_id: int) -> int:
+    """
+    Get the total number of output messages a user has consumed today.
+
+    Sums the output_messages column from api_token_usage for today (UTC).
+
+    Args:
+        user_id: Telegram user ID
+
+    Returns:
+        Total output messages today
+    """
+    db_manager = DatabaseManager()
+    try:
+        with db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+
+            now = datetime.now(timezone.utc)
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            today_start_iso = today_start.isoformat()
+
+            cursor.execute(
+                """
+                SELECT COALESCE(SUM(output_messages), 0)
+                FROM api_token_usage
+                WHERE user_id = ? AND timestamp_utc >= ?
+            """,
+                (user_id, today_start_iso),
+            )
+
+            result = cursor.fetchone()
+            count = result[0] if result else 0
+
+            logger.debug(f"Daily output messages for user {user_id}: {count}")
+            return count
+
+    except sqlite3.Error as e:
+        logger.error(f"Error getting daily output messages for user {user_id}: {e}")
+        return 0
+    except Exception as ex:
+        logger.error(f"Unexpected error in get_user_daily_output_messages: {ex}")
         return 0
 
 
@@ -717,123 +769,12 @@ def get_payment_by_telegram_id(telegram_payment_id: str) -> dict | None:
         return None
 
 
-def decrement_translation_limit(user_id: int) -> bool:
-    """
-    Decrement the user's remaining translation limit by 1.
-
-    Args:
-        user_id: Telegram user ID
-
-    Returns:
-        True if successful, False otherwise
-    """
-    db_manager = DatabaseManager()
-    try:
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            now_iso = datetime.now(timezone.utc).isoformat()
-
-            cursor.execute(
-                """
-                UPDATE user_subscriptions 
-                SET translation_remaining = translation_remaining - 1, updated_at = ?
-                WHERE user_id = ? AND translation_remaining > 0
-            """,
-                (now_iso, user_id),
-            )
-
-            if cursor.rowcount > 0:
-                logger.debug(f"Decremented translation limit for user {user_id}")
-                return True
-            return False
-
-    except sqlite3.Error as e:
-        logger.error(f"Error decrementing translation limit for user {user_id}: {e}")
-        return False
-    except Exception as ex:
-        logger.error(f"Unexpected error in decrement_translation_limit: {ex}")
-        return False
-
-
-def increment_translation_limit(user_id: int, amount: int = 1) -> bool:
-    """
-    Refund translation quota back to the user.
-
-    Args:
-        user_id: Telegram user ID
-        amount: Number of translation credits to add back
-
-    Returns:
-        True if successful, False otherwise
-    """
-    if amount <= 0:
-        return True
-
-    db_manager = DatabaseManager()
-    try:
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            now_iso = datetime.now(timezone.utc).isoformat()
-
-            cursor.execute(
-                """
-                UPDATE user_subscriptions
-                SET translation_remaining = translation_remaining + ?, updated_at = ?
-                WHERE user_id = ?
-            """,
-                (amount, now_iso, user_id),
-            )
-
-            if cursor.rowcount > 0:
-                logger.debug(
-                    f"Refunded {amount} translation credits for user {user_id}"
-                )
-                return True
-            return False
-
-    except sqlite3.Error as e:
-        logger.error(f"Error refunding translation limit for user {user_id}: {e}")
-        return False
-    except Exception as ex:
-        logger.error(f"Unexpected error in increment_translation_limit: {ex}")
-        return False
-
-
-def get_user_remaining_limits(user_id: int) -> dict:
-    """
-    Get user's remaining limits for premium features.
-
-    Args:
-        user_id: Telegram user ID
-
-    Returns:
-        Dict with translation_remaining
-    """
-    subscription = get_user_subscription(user_id)
-    if not subscription:
-        return {"translation_remaining": 0}
-
-    # Check if subscription is still valid
-    if subscription["expires_at"]:
-        try:
-            expires_at = datetime.fromisoformat(subscription["expires_at"])
-            now = datetime.now(timezone.utc)
-            if expires_at <= now:
-                return {"translation_remaining": 0}
-        except Exception:
-            return {"translation_remaining": 0}
-
-    return {
-        "translation_remaining": subscription.get("translation_remaining", 0),
-    }
-
-
 def save_user_session(
     user_id: int,
     last_activity: str,
     request_count: int,
-    daily_token_usage: int,
-    daily_reset_time: str,
+    daily_token_usage: int = 0,
+    daily_reset_time: str | None = None,
     request_timestamps: str | None = None,
 ) -> bool:
     """
@@ -843,13 +784,15 @@ def save_user_session(
         user_id: Telegram user ID
         last_activity: ISO timestamp of last activity
         request_count: Number of requests in current period
-        daily_token_usage: Token usage for the current day
-        daily_reset_time: ISO timestamp when daily counter should reset
+        daily_token_usage: Legacy field, kept for backward compat with DB schema
+        daily_reset_time: Legacy field, kept for backward compat with DB schema
         request_timestamps: JSON-encoded list of recent request timestamps
 
     Returns:
         True if successful, False otherwise
     """
+    if daily_reset_time is None:
+        daily_reset_time = datetime.now(timezone.utc).isoformat()
     db_manager = DatabaseManager()
     try:
         with db_manager.get_connection() as conn:
@@ -995,88 +938,6 @@ def cleanup_old_sessions(timeout_seconds: int = 7200) -> int:
     except Exception as ex:
         logger.error(f"Unexpected error in cleanup_old_sessions: {ex}")
         return 0
-
-
-def ensure_free_user_subscription(
-    user_id: int, translations: int
-) -> bool:
-    """
-    Ensure a free user has a subscription record with the given limits.
-    Creates a new record if none exists, or resets if expired.
-
-    Args:
-        user_id: Telegram user ID
-        translations: Initial translation limit
-
-    Returns:
-        True if successful, False otherwise
-    """
-    db_manager = DatabaseManager()
-    try:
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
-            now = datetime.now(timezone.utc)
-            now_iso = now.isoformat()
-
-            # Calculate expiry (30 days from now for free tier)
-            expires_at = now + timedelta(days=30)
-            expires_at_iso = expires_at.isoformat()
-
-            # Check if user already has a subscription
-            subscription = get_user_subscription(user_id)
-
-            if subscription:
-                # Check if expired
-                if subscription["expires_at"]:
-                    try:
-                        current_expiry = datetime.fromisoformat(
-                            subscription["expires_at"]
-                        )
-                        if current_expiry > now:
-                            # Not expired, don't reset
-                            return True
-                    except Exception:
-                        pass
-
-                # Expired or invalid - reset to free tier limits
-                cursor.execute(
-                    """
-                    UPDATE user_subscriptions
-                    SET tier = 'free', expires_at = ?,
-                        translation_remaining = ?,
-                        updated_at = ?
-                    WHERE user_id = ?
-                """,
-                    (expires_at_iso, translations, now_iso, user_id),
-                )
-            else:
-                # Create new free subscription
-                cursor.execute(
-                    """
-                    INSERT INTO user_subscriptions
-                    (user_id, tier, expires_at, translation_remaining, created_at, updated_at)
-                    VALUES (?, 'free', ?, ?, ?, ?)
-                """,
-                    (
-                        user_id,
-                        expires_at_iso,
-                        translations,
-                        now_iso,
-                        now_iso,
-                    ),
-                )
-
-            logger.info(
-                f"Free subscription ensured for user {user_id}: {translations} translations"
-            )
-            return True
-
-    except sqlite3.Error as e:
-        logger.error(f"Error ensuring free subscription for user {user_id}: {e}")
-        return False
-    except Exception as ex:
-        logger.error(f"Unexpected error in ensure_free_user_subscription: {ex}")
-        return False
 
 
 def save_feedback(

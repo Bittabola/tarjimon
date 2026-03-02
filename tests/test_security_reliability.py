@@ -35,7 +35,8 @@ def test_validate_config_requires_feedback_webhook_secret(monkeypatch) -> None:
     )
 
 
-def test_database_quota_refund_round_trip(tmp_path) -> None:
+def test_get_user_daily_output_messages_round_trip(tmp_path) -> None:
+    """Verify get_user_daily_output_messages correctly sums output_messages."""
     import database
 
     original_database_file = database.DATABASE_FILE
@@ -46,22 +47,29 @@ def test_database_quota_refund_round_trip(tmp_path) -> None:
         assert database.init_db() is True
 
         user_id = 123
-        assert (
-            database.ensure_free_user_subscription(
-                user_id=user_id,
-                translations=2,
-            )
-            is True
-        )
 
-        assert database.decrement_translation_limit(user_id) is True
-        assert (
-            database.get_user_subscription(user_id)["translation_remaining"] == 1
+        # No usage yet
+        assert database.get_user_daily_output_messages(user_id) == 0
+
+        # Log a single-message translation
+        database.log_token_usage_to_db(
+            user_id=user_id,
+            service_name="gemini",
+            tokens_this_call=100,
+            is_translation=True,
+            output_messages=1,
         )
-        assert database.increment_translation_limit(user_id, amount=1) is True
-        assert (
-            database.get_user_subscription(user_id)["translation_remaining"] == 2
+        assert database.get_user_daily_output_messages(user_id) == 1
+
+        # Log a multi-message translation (2 parts)
+        database.log_token_usage_to_db(
+            user_id=user_id,
+            service_name="gemini",
+            tokens_this_call=200,
+            is_translation=True,
+            output_messages=2,
         )
+        assert database.get_user_daily_output_messages(user_id) == 3
     finally:
         database.DATABASE_FILE = original_database_file
         database.DatabaseManager._instance = None

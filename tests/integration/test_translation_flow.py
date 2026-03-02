@@ -4,12 +4,13 @@ Tests the full flow from receiving a Telegram message through to the
 Gemini API call, response formatting, and database state changes.
 
 Tests:
-- Text translation full pipeline (quota decrement + usage logging)
+- Text translation full pipeline (usage logging with output_messages)
 - Image translation full pipeline (download + OCR)
 - Image with caption structured response parsing
-- Quota refund on API error (zero tokens returned)
-- Quota exhausted for free user (upgrade prompt, no API call)
-- Usage logging to api_token_usage table
+- Translation failure on API error (zero tokens)
+- Daily limit exceeded for free user (upgrade prompt, no API call)
+- Usage logging to api_token_usage table with output_messages
+- Multi-message output counting (long text -> 2+ parts)
 """
 
 from __future__ import annotations
@@ -45,11 +46,6 @@ def _set_streaming_response(patch_gemini, text, total_tokens, input_tokens, outp
     )
 
 
-def _get_subscription(user_id: int) -> dict | None:
-    """Read the user_subscriptions row for *user_id* from the temp DB."""
-    return database.get_user_subscription(user_id)
-
-
 def _count_usage_rows(user_id: int) -> int:
     """Return the number of rows in api_token_usage for *user_id*."""
     db = database.DatabaseManager()
@@ -74,8 +70,24 @@ def _get_usage_row(user_id: int) -> dict | None:
         row = cursor.fetchone()
         if row is None:
             return None
-        # sqlite3.Row supports dict() conversion via keys()
         return dict(row)
+
+
+def _get_daily_output_messages(user_id: int) -> int:
+    """Return the daily output message count for *user_id*."""
+    return database.get_user_daily_output_messages(user_id)
+
+
+def _prepopulate_usage(user_id: int, count: int) -> None:
+    """Insert *count* usage rows for *user_id* to simulate prior usage today."""
+    for _ in range(count):
+        database.log_token_usage_to_db(
+            user_id=user_id,
+            service_name="gemini",
+            tokens_this_call=100,
+            is_translation=True,
+            output_messages=1,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -87,17 +99,10 @@ async def test_text_translation_full_pipeline(tmp_db, patch_gemini):
     """Text message -> handler -> Gemini -> formatted response.
 
     Verifies:
-    - DB quota decremented (translation_remaining 10 -> 9)
-    - Usage logged in api_token_usage table
+    - Usage logged in api_token_usage table with output_messages=1
     """
     user_id = 1
 
-    # Set up user with 10 translations
-    database.ensure_free_user_subscription(
-        user_id=user_id, translations=10,
-    )
-
-    # Configure Gemini mock (streaming + non-streaming) to return a translated text
     _set_streaming_response(patch_gemini, "Salom dunyo", 100, 50, 50)
 
     update, context = make_text_update(text="Hello world", user_id=user_id, chat_id=user_id)
@@ -106,34 +111,21 @@ async def test_text_translation_full_pipeline(tmp_db, patch_gemini):
 
     # The handler should have edited the status message with the translation
     context.bot.edit_message_text.assert_called()
-    # The final edit should contain the translated text
     last_call_kwargs = context.bot.edit_message_text.call_args
     assert "Salom dunyo" in str(last_call_kwargs)
 
-    # Verify quota decremented: 10 -> 9
-    sub = _get_subscription(user_id)
-    assert sub is not None
-    assert sub["translation_remaining"] == 9
-
-    # Verify usage was logged
+    # Verify usage was logged with output_messages
     assert _count_usage_rows(user_id) == 1
     usage = _get_usage_row(user_id)
     assert usage["token_count"] == 100
     assert usage["is_translation_related"] == 1
     assert usage["content_type"] == "text"
+    assert usage["output_messages"] == 1
 
 
 async def test_image_translation_full_pipeline(tmp_db, patch_gemini):
-    """Photo message -> download -> Gemini OCR -> response with image label.
-
-    Verifies the image download flow and that the response is formatted
-    with the image translation label.
-    """
+    """Photo message -> download -> Gemini OCR -> response with image label."""
     user_id = 2
-
-    database.ensure_free_user_subscription(
-        user_id=user_id, translations=10,
-    )
 
     _set_streaming_response(patch_gemini, "Rasmdan tarjima qilingan matn", 200, 150, 50)
 
@@ -141,30 +133,19 @@ async def test_image_translation_full_pipeline(tmp_db, patch_gemini):
 
     await translate_message(update, context)
 
-    # Verify bot.get_file was called to download the image
     context.bot.get_file.assert_awaited_once()
 
-    # The final edit should contain the image label and translated text
     last_call_kwargs = context.bot.edit_message_text.call_args
     call_text = str(last_call_kwargs)
     assert "Rasmdan tarjima qilingan matn" in call_text
 
-    # Quota should be decremented
-    sub = _get_subscription(user_id)
-    assert sub["translation_remaining"] == 9
+    # Verify usage was logged
+    assert _count_usage_rows(user_id) == 1
 
 
 async def test_image_with_caption_translation(tmp_db, patch_gemini):
-    """Photo + caption -> structured response parsing (IMAGE_TEXT / CAPTION_TEXT).
-
-    When the Gemini response contains IMAGE_TEXT and CAPTION_TEXT markers,
-    the handler should parse them into separate labelled sections.
-    """
+    """Photo + caption -> structured response parsing (IMAGE_TEXT / CAPTION_TEXT)."""
     user_id = 3
-
-    database.ensure_free_user_subscription(
-        user_id=user_id, translations=10,
-    )
 
     structured_response = (
         "IMAGE_TEXT: Rasmda yozilgan matn\nCAPTION_TEXT: Izoh tarjimasi"
@@ -182,31 +163,16 @@ async def test_image_with_caption_translation(tmp_db, patch_gemini):
 
     await translate_message(update, context)
 
-    # The final edit should contain both the image and caption sections
     last_call_kwargs = context.bot.edit_message_text.call_args
     call_text = str(last_call_kwargs)
     assert "Rasmda yozilgan matn" in call_text
     assert "Izoh tarjimasi" in call_text
 
-    # Quota should be decremented
-    sub = _get_subscription(user_id)
-    assert sub["translation_remaining"] == 9
 
-
-async def test_translation_refund_on_api_error(tmp_db, patch_gemini):
-    """Gemini returns 0 tokens -> quota refunded (stays at 10).
-
-    When the API returns zero tokens, execute_translation detects failure
-    and calls increment_translation_limit to refund the reserved credit.
-    """
+async def test_translation_failure_on_api_error(tmp_db, patch_gemini):
+    """Gemini returns 0 tokens -> failure (no refund needed in new system)."""
     user_id = 4
 
-    database.ensure_free_user_subscription(
-        user_id=user_id, translations=10,
-    )
-
-    # Return a response with empty text and 0 tokens to trigger refund.
-    # Streaming path: empty text + 0 tokens → no token estimation → refund.
     _set_streaming_response(patch_gemini, "", 0, 0, 0)
 
     update, context = make_text_update(
@@ -215,27 +181,16 @@ async def test_translation_refund_on_api_error(tmp_db, patch_gemini):
 
     await translate_message(update, context)
 
-    # Quota should remain at 10 (decremented then refunded)
-    sub = _get_subscription(user_id)
-    assert sub is not None
-    assert sub["translation_remaining"] == 10
-
     # No usage should be logged for failed translations
     assert _count_usage_rows(user_id) == 0
 
 
-async def test_translation_quota_exhausted_free_user(tmp_db, patch_gemini):
-    """User with 0 translations remaining -> upgrade prompt, no API call.
-
-    The handler should detect zero remaining translations and display
-    the subscription upgrade prompt without calling the Gemini API.
-    """
+async def test_daily_limit_exceeded_free_user(tmp_db, patch_gemini):
+    """User with daily limit exhausted -> upgrade prompt, no API call."""
     user_id = 5
 
-    # Set up user with 0 translations remaining
-    database.ensure_free_user_subscription(
-        user_id=user_id, translations=0,
-    )
+    # Pre-populate 10 usage rows (free limit)
+    _prepopulate_usage(user_id, 10)
 
     update, context = make_text_update(
         text="Hello world", user_id=user_id, chat_id=user_id,
@@ -245,25 +200,17 @@ async def test_translation_quota_exhausted_free_user(tmp_db, patch_gemini):
 
     # Gemini should NOT have been called
     patch_gemini.aio.models.generate_content.assert_not_awaited()
+    patch_gemini.aio.models.generate_content_stream.assert_not_awaited()
 
-    # The response should contain the subscription upgrade prompt
+    # The response should contain the limit exceeded message
     last_call_kwargs = context.bot.edit_message_text.call_args
     call_text = str(last_call_kwargs)
-    # The prompt contains the free limit exceeded message
     assert "limit" in call_text.lower() or "Obuna" in call_text
 
 
 async def test_translation_usage_logged_to_db(tmp_db, patch_gemini):
-    """Successful translation -> row in api_token_usage table.
-
-    Verifies that all relevant fields (service_name, token counts,
-    content_type, content_preview) are correctly recorded.
-    """
+    """Successful translation -> row in api_token_usage table with output_messages."""
     user_id = 6
-
-    database.ensure_free_user_subscription(
-        user_id=user_id, translations=10,
-    )
 
     _set_streaming_response(patch_gemini, "Tarjima natijasi", 120, 70, 50)
 
@@ -273,7 +220,6 @@ async def test_translation_usage_logged_to_db(tmp_db, patch_gemini):
 
     await translate_message(update, context)
 
-    # Verify exactly one usage row was created
     assert _count_usage_rows(user_id) == 1
 
     usage = _get_usage_row(user_id)
@@ -287,6 +233,32 @@ async def test_translation_usage_logged_to_db(tmp_db, patch_gemini):
     assert usage["content_type"] == "text"
     assert usage["content_preview"] is not None
     assert "Text to translate" in usage["content_preview"]
+    assert usage["output_messages"] == 1
+
+
+async def test_multi_message_output_counting(tmp_db, patch_gemini):
+    """Long translation that splits into 2+ parts logs output_messages=len(parts)."""
+    user_id = 7
+
+    # Generate text longer than 4096 chars to trigger split_message
+    long_text = "Tarjima natijasi. " * 300  # ~5400 chars
+
+    _set_streaming_response(patch_gemini, long_text, 500, 200, 300)
+
+    update, context = make_text_update(
+        text="Long text to translate", user_id=user_id, chat_id=user_id,
+    )
+
+    await translate_message(update, context)
+
+    usage = _get_usage_row(user_id)
+    assert usage is not None
+    # The output should have been split into multiple messages
+    assert usage["output_messages"] >= 2
+
+    # Daily output messages should reflect the split count
+    daily = _get_daily_output_messages(user_id)
+    assert daily >= 2
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +269,6 @@ async def test_translation_usage_logged_to_db(tmp_db, patch_gemini):
 async def test_text_translation_uses_streaming(tmp_db, patch_gemini):
     """Text-only translation uses streaming API and edits message progressively."""
     user_id = 30
-    database.ensure_free_user_subscription(user_id=user_id, translations=10)
 
     chunks = make_gemini_stream_chunks(
         text="Salom dunyo tarjimasi", total_tokens=100, input_tokens=50, output_tokens=50,
@@ -318,15 +289,13 @@ async def test_text_translation_uses_streaming(tmp_db, patch_gemini):
     # Final message contains translated text
     last_edit = context.bot.edit_message_text.call_args
     assert "Salom dunyo tarjimasi" in str(last_edit)
-    # Quota decremented
-    sub = database.get_user_subscription(user_id)
-    assert sub["translation_remaining"] == 9
+    # Usage logged
+    assert _count_usage_rows(user_id) == 1
 
 
 async def test_image_with_caption_skips_streaming(tmp_db, patch_gemini):
     """Image + caption uses non-streaming path for structured response parsing."""
     user_id = 31
-    database.ensure_free_user_subscription(user_id=user_id, translations=10)
 
     structured = "IMAGE_TEXT: Rasm matni\nCAPTION_TEXT: Izoh tarjimasi"
     patch_gemini.aio.models.generate_content.return_value = make_gemini_response(
@@ -345,17 +314,12 @@ async def test_image_with_caption_skips_streaming(tmp_db, patch_gemini):
 async def test_streaming_falls_back_to_non_streaming_after_retries(tmp_db, patch_gemini):
     """When streaming retries exhaust, falls back to non-streaming API."""
     user_id = 32
-    database.ensure_free_user_subscription(user_id=user_id, translations=10)
 
-    # Make streaming always fail with a retryable error.
-    # Use TimeoutError (Python builtin) to avoid class identity issues when
-    # the smoke test conftest restores real google.genai modules.
     async def failing_stream(*a, **kw):
         raise TimeoutError("stream timed out")
 
     patch_gemini.aio.models.generate_content_stream.side_effect = failing_stream
 
-    # Non-streaming should succeed as fallback
     patch_gemini.aio.models.generate_content.return_value = make_gemini_response(
         text="Fallback tarjima", total_tokens=80, input_tokens=40, output_tokens=40,
     )
@@ -363,9 +327,7 @@ async def test_streaming_falls_back_to_non_streaming_after_retries(tmp_db, patch
     update, context = make_text_update(text="Hello fallback", user_id=user_id, chat_id=user_id)
     await translate_message(update, context)
 
-    # Non-streaming was called as fallback
     patch_gemini.aio.models.generate_content.assert_awaited()
-    # Final message contains the fallback translation
     last_edit = context.bot.edit_message_text.call_args
     assert "Fallback tarjima" in str(last_edit)
 
@@ -373,7 +335,6 @@ async def test_streaming_falls_back_to_non_streaming_after_retries(tmp_db, patch
 async def test_streaming_chunk_valueerror_skipped(tmp_db, patch_gemini):
     """Chunks that raise ValueError on .text are silently skipped."""
     user_id = 33
-    database.ensure_free_user_subscription(user_id=user_id, translations=10)
 
     good_chunk = MagicMock()
     good_chunk.text = "Salom dunyo"
@@ -402,10 +363,9 @@ async def test_streaming_stops_edits_on_deleted_message(tmp_db, patch_gemini):
     from telegram.error import BadRequest
 
     user_id = 34
-    database.ensure_free_user_subscription(user_id=user_id, translations=10)
 
     chunks = make_gemini_stream_chunks(
-        text="A" * 200,  # Long enough to trigger multiple edits
+        text="A" * 200,
         total_tokens=100, input_tokens=50, output_tokens=50,
         num_chunks=10,
     )
@@ -417,9 +377,6 @@ async def test_streaming_stops_edits_on_deleted_message(tmp_db, patch_gemini):
 
     update, context = make_text_update(text="Test deleted msg", user_id=user_id, chat_id=user_id)
 
-    # Make edit_message_text raise "message to edit not found" on streaming edits.
-    # Streaming edits contain the cursor indicator (▌); status updates and the
-    # final formatted edit do not.
     original_edit = context.bot.edit_message_text
 
     async def edit_side_effect(*args, **kwargs):
@@ -432,19 +389,15 @@ async def test_streaming_stops_edits_on_deleted_message(tmp_db, patch_gemini):
 
     await translate_message(update, context)
 
-    # Translation should still complete (streaming edits are non-fatal)
-    # The function should not have called edit many times after the failure
-    assert context.bot.edit_message_text.call_count < 6  # Would be ~10+ without the stop
+    assert context.bot.edit_message_text.call_count < 6
 
 
 async def test_streaming_estimates_tokens_when_metadata_missing(tmp_db, patch_gemini):
     """When stream has no usage_metadata, tokens are estimated from text length."""
     user_id = 35
-    database.ensure_free_user_subscription(user_id=user_id, translations=10)
 
-    # All chunks have usage_metadata=None (simulates abnormal stream end)
     chunk = MagicMock()
-    chunk.text = "Tarjima matni"  # 13 chars → estimated ~3 tokens
+    chunk.text = "Tarjima matni"
     chunk.usage_metadata = None
 
     async def stream_effect(*a, **kw):
@@ -455,9 +408,8 @@ async def test_streaming_estimates_tokens_when_metadata_missing(tmp_db, patch_ge
     update, context = make_text_update(text="Estimate tokens", user_id=user_id, chat_id=user_id)
     await translate_message(update, context)
 
-    # Should NOT have refunded quota (token estimate > 0 means success)
-    sub = database.get_user_subscription(user_id)
-    assert sub["translation_remaining"] == 9  # decremented, not refunded
+    # Should have logged usage (token estimate > 0 means success)
+    assert _count_usage_rows(user_id) == 1
 
 
 async def test_streaming_message_too_long_sends_continuation(tmp_db, patch_gemini):
@@ -465,12 +417,11 @@ async def test_streaming_message_too_long_sends_continuation(tmp_db, patch_gemin
     from telegram.error import BadRequest
 
     user_id = 36
-    database.ensure_free_user_subscription(user_id=user_id, translations=10)
 
-    long_text = "A" * 5000  # exceeds Telegram's 4096 limit
+    long_text = "A" * 5000
     chunks = make_gemini_stream_chunks(
         text=long_text, total_tokens=200, input_tokens=100, output_tokens=100,
-        num_chunks=1,  # Single chunk so first edit attempt triggers the limit
+        num_chunks=1,
     )
 
     async def stream_effect(*a, **kw):
@@ -480,7 +431,6 @@ async def test_streaming_message_too_long_sends_continuation(tmp_db, patch_gemin
 
     update, context = make_text_update(text="Long text", user_id=user_id, chat_id=user_id)
 
-    # Make edit_message_text raise "message_too_long" once text gets big enough.
     original_edit = context.bot.edit_message_text
     edit_call_count = 0
 
@@ -488,31 +438,23 @@ async def test_streaming_message_too_long_sends_continuation(tmp_db, patch_gemin
         nonlocal edit_call_count
         edit_call_count += 1
         text = kwargs.get("text", "")
-        # Simulate Telegram rejecting message that's too long
         if len(str(text)) > 4096:
             raise BadRequest("Message_too_long")
         return await original_edit(*args, **kwargs)
 
     context.bot.edit_message_text = AsyncMock(side_effect=edit_side_effect)
 
-    # send_message returns a mock with a message_id for the continuation message
     continuation_msg = MagicMock()
     continuation_msg.message_id = 999
     context.bot.send_message = AsyncMock(return_value=continuation_msg)
 
     await translate_message(update, context)
 
-    # Continuation message should have been sent
     send_calls = context.bot.send_message.call_args_list
     continuation_texts = [str(c) for c in send_calls]
     assert any("davom etmoqda" in t for t in continuation_texts)
 
-    # Continuation message should have been deleted after final formatting
     context.bot.delete_message.assert_called_once_with(
         chat_id=user_id,
         message_id=999,
     )
-
-    # Translation should still complete and quota should be decremented
-    sub = database.get_user_subscription(user_id)
-    assert sub["translation_remaining"] == 9

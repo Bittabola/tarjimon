@@ -15,8 +15,8 @@ class RateLimits:
     """Rate limiting constants."""
 
     REQUESTS_PER_MINUTE: Final[int] = 10
-    DAILY_TOKENS_PER_USER: Final[int] = 20_000
-    MONTHLY_SYSTEM_TOKENS: Final[int] = 5_000_000
+    DAILY_MESSAGES_FREE: Final[int] = 10
+    DAILY_MESSAGES_PREMIUM: Final[int] = 30
 
 
 @dataclass(frozen=True)
@@ -51,12 +51,7 @@ class ImageLimits:
 class SubscriptionLimits:
     """Subscription tier limits."""
 
-    # Free tier
-    FREE_TRANSLATIONS: Final[int] = 10
-    FREE_PERIOD_DAYS: Final[int] = 30
-
     # Premium tier
-    PREMIUM_TRANSLATIONS: Final[int] = 50
     PREMIUM_PERIOD_DAYS: Final[int] = 30
     PREMIUM_PRICE_STARS: Final[int] = 350
 
