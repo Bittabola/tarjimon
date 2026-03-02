@@ -7,6 +7,7 @@ on:
 env:
   FORGEJO_URL: ${{ github.server_url }}/api/v1
   REPO: ${{ github.repository }}
+  MAX_AUTOFIX: 3
 
 concurrency:
   group: review-${{ github.ref }}
@@ -22,6 +23,7 @@ jobs:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
+      # ── Setup ──────────────────────────────────────────
       - name: Install system dependencies
         run: |
           apt-get update
@@ -51,17 +53,182 @@ jobs:
           git fetch origin main
 
       - name: Install Python dependencies
-        run: |
-          pip install --no-cache-dir -r requirements.txt ruff
+        run: pip install --no-cache-dir -r requirements.txt ruff
 
-      - name: Lint with ruff
-        run: ruff check .
+      - name: Configure git
+        run: |
+          git config user.name "autofix-bot"
+          git config user.email "autofix@noreply"
+          git config --global --add safe.directory "$(pwd)"
+
+      - name: Prepare Claude user
+        run: |
+          useradd -m -s /bin/bash reviewer
+          cp -r /root/.npm /home/reviewer/.npm 2>/dev/null || true
+          mkdir -p /home/reviewer/.claude
+          echo '{"hasCompletedOnboarding":true}' > /home/reviewer/.claude.json
+          chown -R reviewer:reviewer /home/reviewer
+
+      # ── Iteration guard ────────────────────────────────
+      - name: Check autofix iteration count
+        id: iteration
+        shell: bash
+        run: |
+          COUNT=$(git log --oneline origin/main..HEAD | grep -c '\[autofix' || true)
+          echo "COUNT=${COUNT}" >> "$GITHUB_OUTPUT"
+          echo "Autofix iteration: ${COUNT}/${MAX_AUTOFIX}"
+          if [ "$COUNT" -ge "$MAX_AUTOFIX" ]; then
+            echo "EXHAUSTED=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "EXHAUSTED=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Abort if max retries exhausted
+        if: steps.iteration.outputs.EXHAUSTED == 'true'
+        shell: bash
+        run: |
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          TEXT=$(printf '*Autofix exhausted* (%s/%s) -- `%s`\nBranch: `%s`\nManual fix needed.' \
+            "${{ steps.iteration.outputs.COUNT }}" "$MAX_AUTOFIX" "$REPO_NAME" "$GITHUB_REF_NAME")
+          curl -s -X POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg chat_id "$TELEGRAM_CHAT_ID" \
+              --arg text "$TEXT" \
+              '{chat_id: $chat_id, text: $text, parse_mode: "Markdown"}')"
+          exit 1
+
+      # ── Lint & test ────────────────────────────────────
+      - name: Ruff auto-fix
+        if: steps.iteration.outputs.EXHAUSTED == 'false'
+        run: ruff check --fix . || true
+
+      - name: Lint check
+        id: lint
+        if: steps.iteration.outputs.EXHAUSTED == 'false'
+        shell: bash
+        run: |
+          if ruff check . > /tmp/lint_errors.txt 2>&1; then
+            echo "OK=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "OK=false" >> "$GITHUB_OUTPUT"
+            echo "Lint errors found:"
+            cat /tmp/lint_errors.txt
+          fi
 
       - name: Run tests
-        run: pytest -q
+        id: tests
+        if: steps.iteration.outputs.EXHAUSTED == 'false'
+        shell: bash
+        run: |
+          if pytest -q > /tmp/test_errors.txt 2>&1; then
+            echo "OK=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "OK=false" >> "$GITHUB_OUTPUT"
+            echo "Test failures found:"
+            cat /tmp/test_errors.txt
+          fi
 
+      - name: Check for uncommitted changes
+        id: dirty
+        if: steps.iteration.outputs.EXHAUSTED == 'false'
+        shell: bash
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "CHANGED=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "CHANGED=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── Decide path ────────────────────────────────────
+      - name: Determine action
+        id: path
+        if: steps.iteration.outputs.EXHAUSTED == 'false'
+        shell: bash
+        run: |
+          if [ "${{ steps.lint.outputs.OK }}" = "false" ] || [ "${{ steps.tests.outputs.OK }}" = "false" ]; then
+            echo "ACTION=fix" >> "$GITHUB_OUTPUT"
+            echo "Path: fix (lint/test errors found)"
+          elif [ "${{ steps.dirty.outputs.CHANGED }}" = "true" ]; then
+            echo "ACTION=ruff-commit" >> "$GITHUB_OUTPUT"
+            echo "Path: ruff-commit (ruff auto-fixed files, all checks pass)"
+          else
+            echo "ACTION=review" >> "$GITHUB_OUTPUT"
+            echo "Path: review (all clean)"
+          fi
+
+      - name: Set repo ownership for Claude
+        if: steps.path.outputs.ACTION == 'fix' || steps.path.outputs.ACTION == 'review'
+        run: chown -R reviewer:reviewer .
+
+      # ── PATH A: Fix lint/test errors ───────────────────
+      - name: Claude auto-fix lint/test errors
+        if: steps.path.outputs.ACTION == 'fix'
+        shell: bash
+        run: |
+          cat > /tmp/fix_prompt.txt <<'PROMPT_END'
+          You are a senior Python developer. Fix the following errors in this Python/FastAPI Telegram bot codebase.
+
+          PROMPT_END
+
+          if [ "${{ steps.lint.outputs.OK }}" = "false" ] && [ -s /tmp/lint_errors.txt ]; then
+            echo "LINT ERRORS:" >> /tmp/fix_prompt.txt
+            cat /tmp/lint_errors.txt >> /tmp/fix_prompt.txt
+            printf '\n' >> /tmp/fix_prompt.txt
+          fi
+
+          if [ "${{ steps.tests.outputs.OK }}" = "false" ] && [ -s /tmp/test_errors.txt ]; then
+            echo "TEST FAILURES:" >> /tmp/fix_prompt.txt
+            cat /tmp/test_errors.txt >> /tmp/fix_prompt.txt
+            printf '\n' >> /tmp/fix_prompt.txt
+          fi
+
+          cat >> /tmp/fix_prompt.txt <<'PROMPT_END'
+
+          Instructions:
+          - Fix all lint errors and test failures
+          - Do not change functionality, only fix the errors
+          - Run 'ruff check .' after your fixes to verify lint passes
+          - Run 'pytest -q' after your fixes to verify tests pass
+          PROMPT_END
+
+          chown reviewer:reviewer /tmp/fix_prompt.txt
+
+          runuser -u reviewer -- claude -p \
+            --model sonnet \
+            --max-turns 10 \
+            --allowedTools "Read,Edit,Write,Grep,Glob,Bash" \
+            --dangerously-skip-permissions \
+            --no-session-persistence \
+            - < /tmp/fix_prompt.txt
+
+      - name: Commit and push lint/test fixes
+        if: steps.path.outputs.ACTION == 'fix'
+        shell: bash
+        run: |
+          N=$(( ${{ steps.iteration.outputs.COUNT }} + 1 ))
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Claude made no changes — fix attempt failed"
+            exit 1
+          fi
+          git commit -m "[autofix ${N}/${MAX_AUTOFIX}] fix lint/test errors"
+          git push origin "$GITHUB_REF_NAME"
+
+      # ── PATH B: Commit ruff auto-fixes ─────────────────
+      - name: Commit ruff auto-fixes
+        if: steps.path.outputs.ACTION == 'ruff-commit'
+        shell: bash
+        run: |
+          git add -A
+          git commit -m "[ruff-fix] auto-format"
+          git push origin "$GITHUB_REF_NAME"
+
+      # ── PATH C: Review ─────────────────────────────────
       - name: Create or find PR
         id: pr
+        if: steps.path.outputs.ACTION == 'review'
         shell: bash
         env:
           AUTO_MERGE_TOKEN: ${{ secrets.AUTO_MERGE_TOKEN }}
@@ -91,20 +258,14 @@ jobs:
           echo "PR_NUMBER=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "BRANCH=${BRANCH}" >> "$GITHUB_OUTPUT"
 
-      - name: Prepare review
-        run: |
-          git diff origin/main...HEAD > /tmp/diff.txt
-          useradd -m -s /bin/bash reviewer
-          cp -r /root/.npm /home/reviewer/.npm 2>/dev/null || true
-          mkdir -p /home/reviewer/.claude
-          echo '{"hasCompletedOnboarding":true}' > /home/reviewer/.claude.json
-          chown -R reviewer:reviewer /home/reviewer
-          chown -R reviewer:reviewer . /tmp/diff.txt
-
       - name: Claude review
         id: claude
+        if: steps.path.outputs.ACTION == 'review'
         shell: bash
         run: |
+          git diff origin/main...HEAD > /tmp/diff.txt
+          chown reviewer:reviewer /tmp/diff.txt
+
           REVIEW_SCHEMA='{"type":"object","properties":{"verdict":{"type":"string","enum":["APPROVED","CHANGES_REQUESTED"]},"summary":{"type":"string"},"issues":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["critical","warning","suggestion"]},"file":{"type":"string"},"description":{"type":"string"}},"required":["severity","description"]}}},"required":["verdict","summary","issues"]}'
 
           cat > /tmp/review_prompt.txt <<'PROMPT_END'
@@ -150,6 +311,9 @@ jobs:
 
           echo "VERDICT=${VERDICT}" >> "$GITHUB_OUTPUT"
 
+          echo "$STRUCTURED" | jq -c '.issues' > /tmp/review_issues.json
+          chown reviewer:reviewer /tmp/review_issues.json
+
           {
             if [ "$VERDICT" = "APPROVED" ]; then
               printf '## Approved\n\n'
@@ -177,6 +341,7 @@ jobs:
           } > /tmp/pr_comment.txt
 
       - name: Post PR comment
+        if: steps.path.outputs.ACTION == 'review'
         shell: bash
         env:
           AUTO_MERGE_TOKEN: ${{ secrets.AUTO_MERGE_TOKEN }}
@@ -196,8 +361,8 @@ jobs:
           echo "PR comment posted successfully"
 
       - name: Merge PR (if approved)
-        shell: bash
         if: steps.claude.outputs.VERDICT == 'APPROVED'
+        shell: bash
         env:
           AUTO_MERGE_TOKEN: ${{ secrets.AUTO_MERGE_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.PR_NUMBER }}
@@ -214,16 +379,60 @@ jobs:
           fi
           echo "PR merged successfully"
 
-      - name: Notify on rejection
-        shell: bash
+      # ── PATH C2: Review rejected → Claude fixes → push ─
+      - name: Claude auto-fix review issues
         if: steps.claude.outputs.VERDICT == 'CHANGES_REQUESTED'
-        env:
-          PR_NUMBER: ${{ steps.pr.outputs.PR_NUMBER }}
-          BRANCH: ${{ steps.pr.outputs.BRANCH }}
+        shell: bash
+        run: |
+          cat > /tmp/fix_prompt.txt <<'PROMPT_END'
+          You are a senior Python developer. A code review found the following issues in this Python/FastAPI Telegram bot codebase. Fix them.
+
+          REVIEW ISSUES:
+          PROMPT_END
+
+          cat /tmp/review_issues.json >> /tmp/fix_prompt.txt
+
+          cat >> /tmp/fix_prompt.txt <<'PROMPT_END'
+
+          Instructions:
+          - Fix all critical and warning-level issues
+          - You may address suggestions if they are trivial, but focus on critical/warning
+          - Do not change unrelated functionality
+          - Run 'ruff check .' after your fixes to verify lint passes
+          - Run 'pytest -q' after your fixes to verify tests pass
+          PROMPT_END
+
+          chown reviewer:reviewer /tmp/fix_prompt.txt
+
+          runuser -u reviewer -- claude -p \
+            --model sonnet \
+            --max-turns 10 \
+            --allowedTools "Read,Edit,Write,Grep,Glob,Bash" \
+            --dangerously-skip-permissions \
+            --no-session-persistence \
+            - < /tmp/fix_prompt.txt
+
+      - name: Commit and push review fixes
+        if: steps.claude.outputs.VERDICT == 'CHANGES_REQUESTED'
+        shell: bash
+        run: |
+          N=$(( ${{ steps.iteration.outputs.COUNT }} + 1 ))
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Claude made no changes — fix attempt failed"
+            exit 1
+          fi
+          git commit -m "[autofix ${N}/${MAX_AUTOFIX}] address review feedback"
+          git push origin "$GITHUB_REF_NAME"
+
+      # ── Failure notification ───────────────────────────
+      - name: Notify on failure
+        if: failure() && steps.iteration.outputs.EXHAUSTED != 'true'
+        shell: bash
         run: |
           REPO_NAME="${GITHUB_REPOSITORY#*/}"
-          TEXT=$(printf '*Changes requested* -- `%s` PR #%s\nBranch: `%s`\n[View PR](https://git.fayzullaev.ca/%s/pulls/%s)' \
-            "$REPO_NAME" "$PR_NUMBER" "$BRANCH" "$GITHUB_REPOSITORY" "$PR_NUMBER")
+          TEXT=$(printf '*Auto-fix failed* -- `%s`\nBranch: `%s`\n[View run](https://git.fayzullaev.ca/%s/actions)' \
+            "$REPO_NAME" "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY")
           curl -s -X POST \
             "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             -H "Content-Type: application/json" \
@@ -231,4 +440,3 @@ jobs:
               --arg chat_id "$TELEGRAM_CHAT_ID" \
               --arg text "$TEXT" \
               '{chat_id: $chat_id, text: $text, parse_mode: "Markdown"}')"
-          exit 1
