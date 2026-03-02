@@ -221,7 +221,7 @@ Bir kunda {limit} ta xabar tarjima qilishingiz mumkin. Bugun {used} ta xabar tar
 
 Obunani uzaytirish uchun yangi tarif xarid qilishingiz mumkin:"""
 
-SUBSCRIBE_FREE_USER_INFO: Final[str] = """<b>Bepul tarif:</b>
+SUBSCRIBE_FREE_USER_INFO: Final[str] = """<b>Sizning tarifingiz:</b> Bepul tarif
 - kuniga {free_messages} ta xabar
 
 Premium tarifga obuna bo'ling va bemalol tarjima qiling.
@@ -235,7 +235,7 @@ Premium tarifga obuna bo'ling va bemalol tarjima qiling.
 # STATS MESSAGES
 # =============================================================================
 
-STATS_PREMIUM: Final[str] = """<b>Premium obuna</b>
+STATS_PREMIUM: Final[str] = """<b>Sizning tarifingiz:</b> Premium tarif
 
 Amal qilish muddati: {days_remaining} kun (<b>{date}</b>gacha)
 
@@ -243,7 +243,7 @@ Bir kunda {limit} ta xabar tarjima qilishingiz mumkin. Bugun {used} ta xabar tar
 
 Obunani uzaytirish uchun yangi tarif xarid qiling:"""
 
-STATS_FREE: Final[str] = """<b>Bepul tarif</b>
+STATS_FREE: Final[str] = """<b>Sizning tarifingiz:</b> Bepul tarif
 
 Bir kunda {limit} ta xabar tarjima qilishingiz mumkin. Bugun {used} ta xabar tarjima qildingiz.
 
