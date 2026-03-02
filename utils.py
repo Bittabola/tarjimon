@@ -117,6 +117,7 @@ def format_number(number: int | float, decimal_places: int = 0) -> str:
     return f"{int(number):,}"
 
 
+
 def sanitize_callback_data(data: str, max_length: int = 64) -> str:
     """
     Sanitize callback data for Telegram inline buttons.
