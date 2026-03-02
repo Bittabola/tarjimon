@@ -61,6 +61,16 @@ jobs:
           git config user.email "autofix@noreply"
           git config --global --add safe.directory "$(pwd)"
 
+          # Helper used by all commit steps
+          cat > /usr/local/bin/warn-untracked <<'SCRIPT'
+          #!/bin/sh
+          UNTRACKED=$(git ls-files --others --exclude-standard)
+          if [ -n "$UNTRACKED" ]; then
+            echo "::warning::Claude created new files that won't be committed: $UNTRACKED"
+          fi
+          SCRIPT
+          chmod +x /usr/local/bin/warn-untracked
+
       - name: Prepare Claude user
         run: |
           useradd -m -s /bin/bash reviewer
@@ -211,10 +221,7 @@ jobs:
         run: |
           N=$(( ${{ steps.iteration.outputs.COUNT }} + 1 ))
           git add -u
-          UNTRACKED=$(git ls-files --others --exclude-standard)
-          if [ -n "$UNTRACKED" ]; then
-            echo "::warning::Claude created new files that won't be committed: $UNTRACKED"
-          fi
+          warn-untracked
           if git diff --cached --quiet; then
             echo "Claude made no changes — fix attempt failed"
             exit 1
@@ -228,9 +235,10 @@ jobs:
         shell: bash
         run: |
           git add -u
-          UNTRACKED=$(git ls-files --others --exclude-standard)
-          if [ -n "$UNTRACKED" ]; then
-            echo "::warning::Claude created new files that won't be committed: $UNTRACKED"
+          warn-untracked
+          if git diff --cached --quiet; then
+            echo "No actual file changes from ruff — skipping commit"
+            exit 0
           fi
           git commit -m "[ruff-fix] auto-format"
           git push origin "$GITHUB_REF_NAME"
@@ -412,6 +420,7 @@ jobs:
           - Do not change unrelated functionality
           - Run 'ruff check .' after your fixes to verify lint passes
           - Run 'pytest -q' after your fixes to verify tests pass
+          - Do NOT run any git commands (git add, git commit, git push, etc.) — staging and committing is handled externally
           PROMPT_END
 
           chown reviewer:reviewer /tmp/fix_prompt.txt
@@ -430,10 +439,7 @@ jobs:
         run: |
           N=$(( ${{ steps.iteration.outputs.COUNT }} + 1 ))
           git add -u
-          UNTRACKED=$(git ls-files --others --exclude-standard)
-          if [ -n "$UNTRACKED" ]; then
-            echo "::warning::Claude created new files that won't be committed: $UNTRACKED"
-          fi
+          warn-untracked
           if git diff --cached --quiet; then
             echo "Claude made no changes — fix attempt failed"
             exit 1
