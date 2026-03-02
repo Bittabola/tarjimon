@@ -68,13 +68,14 @@ jobs:
           mkdir -p /home/reviewer/.claude
           echo '{"hasCompletedOnboarding":true}' > /home/reviewer/.claude.json
           chown -R reviewer:reviewer /home/reviewer
+          runuser -u reviewer -- git config --global --add safe.directory "$(pwd)"
 
       # ── Iteration guard ────────────────────────────────
       - name: Check autofix iteration count
         id: iteration
         shell: bash
         run: |
-          COUNT=$(git log --oneline origin/main..HEAD | grep -c '\[autofix' || true)
+          COUNT=$(git log --oneline origin/main..HEAD | grep -cE '\[(autofix|ruff-fix)' || true)
           echo "COUNT=${COUNT}" >> "$GITHUB_OUTPUT"
           echo "Autofix iteration: ${COUNT}/${MAX_AUTOFIX}"
           if [ "$COUNT" -ge "$MAX_AUTOFIX" ]; then
@@ -160,7 +161,7 @@ jobs:
 
       - name: Set repo ownership for Claude
         if: steps.path.outputs.ACTION == 'fix' || steps.path.outputs.ACTION == 'review'
-        run: chown -R reviewer:reviewer .
+        run: find . -path ./.git -prune -o -exec chown reviewer:reviewer {} +
 
       # ── PATH A: Fix lint/test errors ───────────────────
       - name: Claude auto-fix lint/test errors
@@ -191,6 +192,7 @@ jobs:
           - Do not change functionality, only fix the errors
           - Run 'ruff check .' after your fixes to verify lint passes
           - Run 'pytest -q' after your fixes to verify tests pass
+          - Do NOT run any git commands (git add, git commit, git push, etc.) — staging and committing is handled externally
           PROMPT_END
 
           chown reviewer:reviewer /tmp/fix_prompt.txt
@@ -208,7 +210,11 @@ jobs:
         shell: bash
         run: |
           N=$(( ${{ steps.iteration.outputs.COUNT }} + 1 ))
-          git add -A
+          git add -u
+          UNTRACKED=$(git ls-files --others --exclude-standard)
+          if [ -n "$UNTRACKED" ]; then
+            echo "::warning::Claude created new files that won't be committed: $UNTRACKED"
+          fi
           if git diff --cached --quiet; then
             echo "Claude made no changes — fix attempt failed"
             exit 1
@@ -221,7 +227,11 @@ jobs:
         if: steps.path.outputs.ACTION == 'ruff-commit'
         shell: bash
         run: |
-          git add -A
+          git add -u
+          UNTRACKED=$(git ls-files --others --exclude-standard)
+          if [ -n "$UNTRACKED" ]; then
+            echo "::warning::Claude created new files that won't be committed: $UNTRACKED"
+          fi
           git commit -m "[ruff-fix] auto-format"
           git push origin "$GITHUB_REF_NAME"
 
@@ -276,8 +286,10 @@ jobs:
           - Performance problems, bad practices (warning)
           - Style improvements, minor suggestions (suggestion)
 
-          Be pragmatic. Only request changes for critical or warning-level issues.
-          If the diff is clean, approve it.
+          VERDICT RULES (strict):
+          - If you find ANY critical or warning-level issues, you MUST set verdict to CHANGES_REQUESTED.
+          - Only set verdict to APPROVED if there are zero critical and zero warning issues.
+          - Suggestions alone do NOT block approval.
 
           Here is the diff:
           PROMPT_END
@@ -417,7 +429,11 @@ jobs:
         shell: bash
         run: |
           N=$(( ${{ steps.iteration.outputs.COUNT }} + 1 ))
-          git add -A
+          git add -u
+          UNTRACKED=$(git ls-files --others --exclude-standard)
+          if [ -n "$UNTRACKED" ]; then
+            echo "::warning::Claude created new files that won't be committed: $UNTRACKED"
+          fi
           if git diff --cached --quiet; then
             echo "Claude made no changes — fix attempt failed"
             exit 1
