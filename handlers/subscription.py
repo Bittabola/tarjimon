@@ -30,42 +30,39 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     is_premium = is_user_premium(user_id)
     daily_used = get_user_daily_output_messages(user_id)
+    plan = SUBSCRIPTION_PLAN
 
     if is_premium:
         subscription = get_user_subscription(user_id)
         expires_at = subscription["expires_at"] if subscription else "N/A"
-
         formatted_date = format_date_uzbek(expires_at)
 
-        status_text = S.STATUS_PREMIUM.format(
+        text = S.WELCOME_MESSAGE_PREMIUM.format(
             date=formatted_date,
             used=daily_used,
             limit=RATE_LIMITS.DAILY_MESSAGES_PREMIUM,
+            stars=plan["stars"],
+            days=plan["days"],
         )
         keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        S.BTN_INCREASE_LIMIT, callback_data="subscribe_show"
-                    )
-                ]
-            ]
+            [[InlineKeyboardButton(S.BTN_INCREASE_LIMIT, callback_data="subscribe_buy")]]
         )
     else:
-        status_text = S.STATUS_FREE.format(
+        multiplier = RATE_LIMITS.DAILY_MESSAGES_PREMIUM // RATE_LIMITS.DAILY_MESSAGES_FREE
+        text = S.WELCOME_MESSAGE_FREE.format(
             used=daily_used,
             limit=RATE_LIMITS.DAILY_MESSAGES_FREE,
+            stars=plan["stars"],
+            days=plan["days"],
+            premium_limit=RATE_LIMITS.DAILY_MESSAGES_PREMIUM,
+            multiplier=multiplier,
         )
         keyboard = InlineKeyboardMarkup(
-            [[InlineKeyboardButton(S.BTN_SUBSCRIBE, callback_data="subscribe_show")]]
+            [[InlineKeyboardButton(S.BTN_SUBSCRIBE, callback_data="subscribe_buy")]]
         )
 
     await update.message.reply_text(
-        S.WELCOME_MESSAGE.format(
-            status_text=status_text,
-            free_messages=RATE_LIMITS.DAILY_MESSAGES_FREE,
-            premium_messages=RATE_LIMITS.DAILY_MESSAGES_PREMIUM,
-        ),
+        text,
         parse_mode=ParseMode.HTML,
         reply_markup=keyboard,
     )
@@ -132,38 +129,24 @@ async def handle_subscribe_callback(
 
     # Handle "show subscription options" callback
     if query.data == "subscribe_show":
-        user_id = update.effective_user.id
-        is_premium = is_user_premium(user_id)
-        daily_used = get_user_daily_output_messages(user_id)
-
         plan = SUBSCRIPTION_PLAN
         button_text = f"{plan['title']} - {plan['stars']} Yulduz"
         keyboard = InlineKeyboardMarkup(
             [[InlineKeyboardButton(button_text, callback_data="subscribe_buy")]]
         )
 
-        if is_premium:
-            await query.message.reply_text(
-                f"<b>Bugungi foydalanish:</b> {daily_used}/{RATE_LIMITS.DAILY_MESSAGES_PREMIUM} ta xabar\n\n"
-                f"<b>Premium paket ({plan['stars']} Yulduz):</b>\n"
-                f"- kuniga {RATE_LIMITS.DAILY_MESSAGES_PREMIUM} ta xabar\n"
-                f"- {plan['days']} kun amal qiladi",
-                parse_mode=ParseMode.HTML,
-                reply_markup=keyboard,
-            )
-        else:
-            limits_text = S.SUBSCRIBE_FREE_USER_INFO.format(
-                free_messages=RATE_LIMITS.DAILY_MESSAGES_FREE,
-                stars=plan["stars"],
-                premium_messages=RATE_LIMITS.DAILY_MESSAGES_PREMIUM,
-                days=plan["days"],
-            )
+        limits_text = S.SUBSCRIBE_FREE_USER_INFO.format(
+            free_messages=RATE_LIMITS.DAILY_MESSAGES_FREE,
+            stars=plan["stars"],
+            premium_messages=RATE_LIMITS.DAILY_MESSAGES_PREMIUM,
+            days=plan["days"],
+        )
 
-            await query.message.reply_text(
-                f"{S.SUBSCRIBE_HEADING}\n\n{limits_text}",
-                parse_mode=ParseMode.HTML,
-                reply_markup=keyboard,
-            )
+        await query.message.reply_text(
+            f"{S.SUBSCRIBE_HEADING}\n\n{limits_text}",
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
         return
 
     # Handle "buy" callback
@@ -175,7 +158,7 @@ async def handle_subscribe_callback(
             chat_id=update.effective_chat.id,
             title=plan["title"],
             description=plan["description"],
-            payload="premium_30_days",
+            payload="premium_weekly",
             provider_token="",  # Empty string for Telegram Yulduz
             currency="XTR",  # XTR = Telegram Yulduz
             prices=[LabeledPrice(plan["title"], plan["stars"])],
@@ -250,7 +233,7 @@ async def pre_checkout_handler(
 
     # Validate the plan exists (we only have one plan now)
     plan_id = query.invoice_payload
-    if plan_id != "premium_30_days":
+    if plan_id != "premium_weekly":
         await query.answer(ok=False, error_message=S.INVALID_PLAN)
         return
 
@@ -287,7 +270,7 @@ async def successful_payment_handler(
         user_id=user_id,
         telegram_payment_id=telegram_payment_id,
         amount_stars=payment.total_amount,
-        plan="premium_30_days",
+        plan="premium_weekly",
         days=days,
     ):
         logger.error(f"Failed to log payment {telegram_payment_id} for user {user_id}")

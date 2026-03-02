@@ -15,7 +15,7 @@ class RateLimits:
     """Rate limiting constants."""
 
     REQUESTS_PER_MINUTE: Final[int] = 10
-    DAILY_MESSAGES_FREE: Final[int] = 10
+    DAILY_MESSAGES_FREE: Final[int] = 5
     DAILY_MESSAGES_PREMIUM: Final[int] = 30
 
 
@@ -52,8 +52,8 @@ class SubscriptionLimits:
     """Subscription tier limits."""
 
     # Premium tier
-    PREMIUM_PERIOD_DAYS: Final[int] = 30
-    PREMIUM_PRICE_STARS: Final[int] = 350
+    PREMIUM_PERIOD_DAYS: Final[int] = 7
+    PREMIUM_PRICE_STARS: Final[int] = 100
 
 
 @dataclass(frozen=True)
@@ -93,12 +93,13 @@ class APITimeouts:
 class PricingConstants:
     """API pricing constants (USD)."""
 
-    # Gemini 2.5 Pro pricing per 1M tokens (as of Feb 2026)
+    # Gemini 3 Flash Preview pricing per 1M tokens (as of Mar 2026)
     # https://ai.google.dev/gemini-api/docs/pricing
-    GEMINI_INPUT_PRICE_PER_M: Final[float] = 1.25
-    GEMINI_OUTPUT_PRICE_PER_M: Final[float] = 10.00  # applies to output + thinking tokens
-    GEMINI_INPUT_PRICE_PER_M_LONG: Final[float] = 2.50  # >200k context
-    GEMINI_OUTPUT_PRICE_PER_M_LONG: Final[float] = 20.00  # >200k context
+    # No long context surcharge for this model
+    GEMINI_INPUT_PRICE_PER_M: Final[float] = 0.50
+    GEMINI_OUTPUT_PRICE_PER_M: Final[float] = 3.00  # applies to output + thinking tokens
+    GEMINI_INPUT_PRICE_PER_M_LONG: Final[float] = 0.50
+    GEMINI_OUTPUT_PRICE_PER_M_LONG: Final[float] = 3.00
     GEMINI_LONG_CONTEXT_THRESHOLD: Final[int] = 200_000
 
     # Telegram Stars

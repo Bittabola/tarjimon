@@ -16,6 +16,7 @@ from __future__ import annotations
 
 
 import database
+from constants import SUBSCRIPTION_LIMITS
 from handlers.subscription import (
     handle_stats_callback,
     handle_subscribe_callback,
@@ -122,8 +123,8 @@ async def test_stats_show_callback_free_user(tmp_db):
 
 
 async def test_pre_checkout_valid_plan(tmp_db):
-    """Payload 'premium_30_days' results in query.answer(ok=True)."""
-    update, ctx = make_pre_checkout_update(payload="premium_30_days", user_id=6)
+    """Payload 'premium_weekly' results in query.answer(ok=True)."""
+    update, ctx = make_pre_checkout_update(payload="premium_weekly", user_id=6)
 
     await pre_checkout_handler(update, ctx)
 
@@ -158,7 +159,7 @@ async def test_successful_payment_activates_premium(tmp_db):
     update, ctx = make_payment_update(
         user_id=user_id,
         telegram_payment_id="charge_activate_test",
-        total_amount=350,
+        total_amount=SUBSCRIPTION_LIMITS.PREMIUM_PRICE_STARS,
     )
 
     await successful_payment_handler(update, ctx)
@@ -180,7 +181,7 @@ async def test_duplicate_payment_ignored(tmp_db):
     update1, ctx1 = make_payment_update(
         user_id=user_id,
         telegram_payment_id=payment_id,
-        total_amount=350,
+        total_amount=SUBSCRIPTION_LIMITS.PREMIUM_PRICE_STARS,
     )
     await successful_payment_handler(update1, ctx1)
 
@@ -188,7 +189,7 @@ async def test_duplicate_payment_ignored(tmp_db):
     update2, ctx2 = make_payment_update(
         user_id=user_id,
         telegram_payment_id=payment_id,
-        total_amount=350,
+        total_amount=SUBSCRIPTION_LIMITS.PREMIUM_PRICE_STARS,
     )
     await successful_payment_handler(update2, ctx2)
 

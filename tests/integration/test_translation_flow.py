@@ -20,6 +20,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import database
+from constants import RATE_LIMITS
 from handlers.translation import translate_message
 from tests.integration.conftest import make_gemini_response, make_gemini_stream_chunks, fake_stream_iterator
 from tests.integration.helpers import make_text_update, make_photo_update
@@ -189,8 +190,8 @@ async def test_daily_limit_exceeded_free_user(tmp_db, patch_gemini):
     """User with daily limit exhausted -> upgrade prompt, no API call."""
     user_id = 5
 
-    # Pre-populate 10 usage rows (free limit)
-    _prepopulate_usage(user_id, 10)
+    # Pre-populate usage rows up to free limit
+    _prepopulate_usage(user_id, RATE_LIMITS.DAILY_MESSAGES_FREE)
 
     update, context = make_text_update(
         text="Hello world", user_id=user_id, chat_id=user_id,
