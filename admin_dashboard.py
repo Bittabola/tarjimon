@@ -15,7 +15,7 @@ from config import (
     logger,
 )
 from constants import PRICING_CONSTANTS
-from database import DatabaseManager
+from database import _db
 
 # Security
 security = HTTPBasic()
@@ -119,7 +119,6 @@ def format_timestamp_dual_tz(iso_timestamp: str | None) -> str:
 
 def get_overview_stats(days: int = 30) -> dict:
     """Get overview statistics for the dashboard."""
-    db_manager = DatabaseManager()
     start_date, _ = get_date_range(days)
 
     stats = {
@@ -140,7 +139,7 @@ def get_overview_stats(days: int = 30) -> dict:
     }
 
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection(read_only=True) as conn:
             cursor = conn.cursor()
 
             # Token usage stats with tier breakdown
@@ -228,11 +227,10 @@ def get_overview_stats(days: int = 30) -> dict:
 
 def get_errors_list(limit: int = 100, offset: int = 0) -> list[dict]:
     """Get list of recent errors."""
-    db_manager = DatabaseManager()
     errors = []
 
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection(read_only=True) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -265,11 +263,10 @@ def get_errors_list(limit: int = 100, offset: int = 0) -> list[dict]:
 
 def get_requests_list(limit: int = 100, offset: int = 0) -> list[dict]:
     """Get list of recent requests with cost and amortized revenue info."""
-    db_manager = DatabaseManager()
     requests = []
 
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection(read_only=True) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -327,12 +324,11 @@ def get_requests_list(limit: int = 100, offset: int = 0) -> list[dict]:
 
 def get_user_profitability(days: int = 30) -> list[dict]:
     """Get profitability breakdown per premium user."""
-    db_manager = DatabaseManager()
     users = []
     start_date, _ = get_date_range(days)
 
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection(read_only=True) as conn:
             cursor = conn.cursor()
 
             # Get premium users with their costs and payments
@@ -383,12 +379,11 @@ def get_user_profitability(days: int = 30) -> list[dict]:
 
 def get_daily_stats(days: int = 30) -> list[dict]:
     """Get daily breakdown of usage, costs, revenue, and balance."""
-    db_manager = DatabaseManager()
     daily = []
     start_date, _ = get_date_range(days)
 
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection(read_only=True) as conn:
             cursor = conn.cursor()
 
             # Get daily stats with amortized revenue calculation

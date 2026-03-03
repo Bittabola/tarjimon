@@ -134,14 +134,9 @@ def sanitize_callback_data(data: str, max_length: int = 64) -> str:
     if not data:
         return ""
 
-    # Telegram callback data is limited to 64 bytes
     encoded = data.encode("utf-8")
     if len(encoded) <= max_length:
         return data
 
-    # Truncate to fit
-    while len(encoded) > max_length:
-        data = data[:-1]
-        encoded = data.encode("utf-8")
-
-    return data
+    # Slice bytes and decode, ignoring incomplete multibyte chars at the boundary
+    return encoded[:max_length].decode("utf-8", errors="ignore")

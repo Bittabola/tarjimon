@@ -33,7 +33,7 @@ class DatabaseManager:
             os.makedirs(os.path.dirname(DATABASE_FILE), exist_ok=True)
 
     @contextmanager
-    def get_connection(self):
+    def get_connection(self, read_only: bool = False):
         """Context manager for database connections with proper error handling.
 
         Note: WAL mode is set once during init_db() since it persists across connections.
@@ -48,8 +48,8 @@ class DatabaseManager:
             connection.execute("PRAGMA temp_store=MEMORY")
             connection.execute("PRAGMA foreign_keys=ON")
             yield connection
-            # Explicitly commit any pending transactions when context exits successfully
-            connection.commit()
+            if not read_only:
+                connection.commit()
         except sqlite3.Error as e:
             if connection:
                 connection.rollback()
@@ -75,14 +75,17 @@ class DatabaseManager:
             )
 
 
+# Module-level singleton instance
+_db = DatabaseManager()
+
+
 def init_db():
     """Initialize the database with tables and indexes.
 
     Sets WAL mode persistently (survives restarts) for better concurrency.
     """
-    db_manager = DatabaseManager()
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection() as conn:
             cursor = conn.cursor()
 
             # Set WAL mode once - this persists across connections and restarts
@@ -301,9 +304,8 @@ def log_token_usage_to_db(
             billable_output_tokens / 1_000_000
         ) * PRICING_CONSTANTS.GEMINI_OUTPUT_PRICE_PER_M
 
-    db_manager = DatabaseManager()
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection() as conn:
             cursor = conn.cursor()
             # Store UTC timestamp in database
             timestamp_utc = datetime.now(timezone.utc).isoformat()
@@ -392,9 +394,8 @@ def log_error_to_db(
         content_preview: Preview of content that caused the error
         stack_trace: Full stack trace (if available)
     """
-    db_manager = DatabaseManager()
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection() as conn:
             cursor = conn.cursor()
             timestamp_utc = datetime.now(timezone.utc).isoformat()
 
@@ -431,9 +432,8 @@ def get_user_daily_translation_count(user_id: int) -> int:
     Returns:
         Number of translation requests today
     """
-    db_manager = DatabaseManager()
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection(read_only=True) as conn:
             cursor = conn.cursor()
 
             # Get start of today in UTC
@@ -476,9 +476,8 @@ def get_user_daily_output_messages(user_id: int) -> int:
     Returns:
         Total output messages today
     """
-    db_manager = DatabaseManager()
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection(read_only=True) as conn:
             cursor = conn.cursor()
 
             now = datetime.now(timezone.utc)
@@ -518,9 +517,8 @@ def get_user_subscription(user_id: int) -> dict | None:
     Returns:
         Dict with tier, expires_at, and remaining limits, or None if no subscription
     """
-    db_manager = DatabaseManager()
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection(read_only=True) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -596,9 +594,11 @@ def activate_premium(
     Returns:
         True if successful, False otherwise
     """
-    db_manager = DatabaseManager()
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection() as conn:
+            # Exclusive lock prevents concurrent read-modify-write races
+            # (e.g. duplicate payment webhooks double-extending subscriptions).
+            conn.execute("BEGIN EXCLUSIVE")
             cursor = conn.cursor()
             now = datetime.now(timezone.utc)
             now_iso = now.isoformat()
@@ -698,9 +698,8 @@ def log_payment(
     Returns:
         True if successful, False otherwise
     """
-    db_manager = DatabaseManager()
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection() as conn:
             cursor = conn.cursor()
             timestamp_utc = datetime.now(timezone.utc).isoformat()
 
@@ -734,9 +733,8 @@ def get_payment_by_telegram_id(telegram_payment_id: str) -> dict | None:
     Returns:
         Dict with payment details if found, None otherwise
     """
-    db_manager = DatabaseManager()
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection(read_only=True) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -793,15 +791,14 @@ def save_user_session(
     """
     if daily_reset_time is None:
         daily_reset_time = datetime.now(timezone.utc).isoformat()
-    db_manager = DatabaseManager()
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection() as conn:
             cursor = conn.cursor()
             now_iso = datetime.now(timezone.utc).isoformat()
 
             cursor.execute(
                 """
-                INSERT INTO user_sessions 
+                INSERT INTO user_sessions
                 (user_id, last_activity, request_count, daily_token_usage, daily_reset_time, request_timestamps, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(user_id) DO UPDATE SET
@@ -843,9 +840,8 @@ def load_user_session(user_id: int) -> dict | None:
     Returns:
         Dict with session data or None if not found
     """
-    db_manager = DatabaseManager()
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection(read_only=True) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -886,9 +882,8 @@ def delete_user_session(user_id: int) -> bool:
     Returns:
         True if successful, False otherwise
     """
-    db_manager = DatabaseManager()
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM user_sessions WHERE user_id = ?", (user_id,))
             return True
@@ -911,9 +906,8 @@ def cleanup_old_sessions(timeout_seconds: int = 7200) -> int:
     Returns:
         Number of sessions deleted
     """
-    db_manager = DatabaseManager()
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection() as conn:
             cursor = conn.cursor()
 
             # Calculate cutoff time
@@ -962,9 +956,8 @@ def save_feedback(
     Returns:
         The inserted feedback ID, or None if failed
     """
-    db_manager = DatabaseManager()
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection() as conn:
             cursor = conn.cursor()
             timestamp_utc = datetime.now(timezone.utc).isoformat()
 
@@ -1007,9 +1000,8 @@ def update_feedback_admin_msg_id(feedback_id: int, admin_msg_id: int) -> bool:
     Returns:
         True if successful, False otherwise
     """
-    db_manager = DatabaseManager()
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "UPDATE feedback SET admin_msg_id = ? WHERE id = ?",
@@ -1035,9 +1027,8 @@ def get_feedback_by_admin_msg_id(admin_msg_id: int) -> dict | None:
     Returns:
         Dict with feedback data or None if not found
     """
-    db_manager = DatabaseManager()
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection(read_only=True) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -1081,9 +1072,8 @@ def mark_feedback_replied(feedback_id: int) -> bool:
     Returns:
         True if successful, False otherwise
     """
-    db_manager = DatabaseManager()
     try:
-        with db_manager.get_connection() as conn:
+        with _db.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "UPDATE feedback SET replied = 1 WHERE id = ?",

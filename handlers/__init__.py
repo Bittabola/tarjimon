@@ -37,7 +37,6 @@ from .feedback import (
     aloqa,
     handle_feedback_callback,
     is_user_pending_feedback,
-    clear_pending_feedback,
     handle_feedback_message,
 )
 
@@ -59,6 +58,5 @@ __all__ = [
     "aloqa",
     "handle_feedback_callback",
     "is_user_pending_feedback",
-    "clear_pending_feedback",
     "handle_feedback_message",
 ]

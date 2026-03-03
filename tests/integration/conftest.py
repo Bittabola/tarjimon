@@ -137,6 +137,8 @@ def tmp_db(tmp_path, monkeypatch):
 
     # Reset singleton so __init__ re-runs with the patched path
     database.DatabaseManager._instance = None
+    # Update module-level _db to use the fresh singleton
+    database._db = database.DatabaseManager()
 
     result = database.init_db()
     assert result is True, "init_db() must succeed for the temp database"
@@ -151,6 +153,7 @@ def tmp_db(tmp_path, monkeypatch):
     database.DatabaseManager._instance = None
     if instance is not None:
         instance.initialized = False
+    database._db = database.DatabaseManager()
 
 
 # ---------------------------------------------------------------------------

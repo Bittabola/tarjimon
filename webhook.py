@@ -1,9 +1,24 @@
+from __future__ import annotations
+
 import os
 import asyncio
 from contextlib import asynccontextmanager
+
+import httpx
+import uvicorn
 from fastapi import FastAPI, Request, Response
 from telegram import Update
-from telegram.ext import Application
+from telegram.error import TimedOut, NetworkError
+from telegram.ext import (
+    Application,
+    MessageHandler,
+    CommandHandler,
+    CallbackQueryHandler,
+    PreCheckoutQueryHandler,
+    ContextTypes,
+    filters,
+)
+
 from config import (
     TELEGRAM_BOT_TOKEN,
     WEBHOOK_URL,
@@ -18,7 +33,17 @@ from constants import SESSION_CONSTANTS
 from database import init_db
 from user_management import user_manager
 from admin_dashboard import router as admin_router
-import uvicorn
+from handlers import (
+    start,
+    subscribe,
+    handle_subscribe_callback,
+    handle_stats_callback,
+    handle_feedback_callback,
+    pre_checkout_handler,
+    successful_payment_handler,
+    translate_message,
+    aloqa,
+)
 
 # Global flag to control background task
 _cleanup_task = None
@@ -27,6 +52,9 @@ _cleanup_task = None
 _cleanup_consecutive_errors = 0
 _CLEANUP_MAX_CONSECUTIVE_ERRORS = 5
 _CLEANUP_BACKOFF_MULTIPLIER = 5
+
+# Bot application -- initialized in lifespan() after config validation
+application: Application | None = None
 
 
 async def _session_cleanup_loop():
@@ -73,11 +101,70 @@ async def _session_cleanup_loop():
             )
 
 
+def _register_handlers(app_instance: Application) -> None:
+    """Register all bot handlers and the global error handler on *app_instance*."""
+
+    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Global error handler to gracefully handle transient errors.
+
+        Logs the error and suppresses common transient issues like network timeouts.
+        """
+        error = context.error
+
+        # Suppress transient network errors - they're expected occasionally
+        if isinstance(error, (TimedOut, NetworkError)):
+            logger.warning(
+                f"Transient network error (suppressed): {type(error).__name__}: {error}"
+            )
+            return
+
+        # Log other errors for investigation
+        logger.error(f"Unhandled error: {type(error).__name__}: {error}", exc_info=error)
+
+    # Register the global error handler
+    app_instance.add_error_handler(error_handler)
+
+    # Command handlers
+    app_instance.add_handler(CommandHandler("start", start))
+    app_instance.add_handler(CommandHandler("subscribe", subscribe))
+    app_instance.add_handler(CommandHandler("aloqa", aloqa))
+
+    # Payment handlers
+    app_instance.add_handler(PreCheckoutQueryHandler(pre_checkout_handler))
+    app_instance.add_handler(
+        MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler)
+    )
+
+    # Subscription callback handler (for plan selection buttons)
+    app_instance.add_handler(
+        CallbackQueryHandler(handle_subscribe_callback, pattern=r"^subscribe_")
+    )
+
+    # Stats callback handler (for stats/subscribe button on responses)
+    app_instance.add_handler(
+        CallbackQueryHandler(handle_stats_callback, pattern=r"^stats_show$")
+    )
+
+    # Feedback callback handler (for "Admin bilan aloqa" button)
+    app_instance.add_handler(
+        CallbackQueryHandler(handle_feedback_callback, pattern=r"^feedback_start$")
+    )
+
+    # Translation message handler
+    translate_filter = ~filters.COMMAND & (
+        (filters.FORWARDED & (filters.TEXT | filters.CAPTION))
+        | (filters.TEXT & ~filters.FORWARDED)
+        | filters.PHOTO
+        | (filters.Document.IMAGE)
+    )
+    app_instance.add_handler(MessageHandler(translate_filter, translate_message))
+
+
 # Create a FastAPI app
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events."""
-    global _cleanup_task
+    global _cleanup_task, application
     app_initialized = False
     try:
         # Startup event
@@ -87,6 +174,10 @@ async def lifespan(app: FastAPI):
         # Initialize database
         if not init_db():
             raise RuntimeError("Database initialization failed")
+
+        # Build and configure the bot application
+        application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+        _register_handlers(application)
 
         # Initialize the bot application
         await application.initialize()
@@ -147,88 +238,6 @@ app = FastAPI(lifespan=lifespan)
 # Include admin dashboard routes
 app.include_router(admin_router)
 
-# Initialize the bot application
-application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
-# Initialize handlers (import them after application is created)
-from handlers import (  # noqa: E402
-    start,
-    subscribe,
-    handle_subscribe_callback,
-    handle_stats_callback,
-    handle_feedback_callback,
-    pre_checkout_handler,
-    successful_payment_handler,
-    translate_message,
-    aloqa,
-)
-from telegram.ext import (  # noqa: E402
-    MessageHandler,
-    CommandHandler,
-    CallbackQueryHandler,
-    PreCheckoutQueryHandler,
-    ContextTypes,
-    filters,
-)
-from telegram.error import TimedOut, NetworkError  # noqa: E402
-
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Global error handler to gracefully handle transient errors.
-    Logs the error and suppresses common transient issues like network timeouts.
-    """
-    error = context.error
-
-    # Suppress transient network errors - they're expected occasionally
-    if isinstance(error, (TimedOut, NetworkError)):
-        logger.warning(
-            f"Transient network error (suppressed): {type(error).__name__}: {error}"
-        )
-        return
-
-    # Log other errors for investigation
-    logger.error(f"Unhandled error: {type(error).__name__}: {error}", exc_info=error)
-
-
-# Register the global error handler
-application.add_error_handler(error_handler)
-
-# Add handlers
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("subscribe", subscribe))
-application.add_handler(CommandHandler("aloqa", aloqa))
-
-# Payment handlers
-application.add_handler(PreCheckoutQueryHandler(pre_checkout_handler))
-application.add_handler(
-    MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler)
-)
-
-# Subscription callback handler (for plan selection buttons)
-application.add_handler(
-    CallbackQueryHandler(handle_subscribe_callback, pattern=r"^subscribe_")
-)
-
-# Stats callback handler (for stats/subscribe button on responses)
-application.add_handler(
-    CallbackQueryHandler(handle_stats_callback, pattern=r"^stats_show$")
-)
-
-# Feedback callback handler (for "Admin bilan aloqa" button)
-application.add_handler(
-    CallbackQueryHandler(handle_feedback_callback, pattern=r"^feedback_start$")
-)
-
-# Translation message handler
-translate_filter = ~filters.COMMAND & (
-    (filters.FORWARDED & (filters.TEXT | filters.CAPTION))
-    | (filters.TEXT & ~filters.FORWARDED)
-    | filters.PHOTO
-    | (filters.Document.IMAGE)
-)
-application.add_handler(MessageHandler(translate_filter, translate_message))
-
 
 @app.get("/")
 async def root():
@@ -242,7 +251,7 @@ async def health_check():
     Enhanced health check endpoint.
     Checks database connectivity and returns system status.
     """
-    from database import DatabaseManager
+    from database import _db
     import sqlite3
 
     health_status = {
@@ -253,8 +262,7 @@ async def health_check():
 
     # Check database connectivity
     try:
-        db_manager = DatabaseManager()
-        with db_manager.get_connection() as conn:
+        with _db.get_connection(read_only=True) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
             health_status["checks"]["database"] = "ok"
@@ -316,7 +324,6 @@ async def webhook(request: Request):
 @app.post("/feedback_webhook")
 async def feedback_webhook(request: Request):
     """Handle incoming webhook requests from the feedback bot."""
-    import httpx
     from database import get_feedback_by_admin_msg_id, mark_feedback_replied
     import strings as S
     from utils import safe_html

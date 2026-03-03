@@ -25,6 +25,17 @@ from database import (
 )
 
 
+def _get_subscription_display(user_id: int) -> tuple[str, str, int | str]:
+    """Get formatted subscription display info.
+
+    Returns:
+        Tuple of (expires_at_raw, formatted_date, days_remaining)
+    """
+    subscription = get_user_subscription(user_id)
+    expires_at = subscription["expires_at"] if subscription else "N/A"
+    return expires_at, format_date_uzbek(expires_at), get_days_remaining(expires_at)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the /start command."""
     user_id = update.effective_user.id
@@ -33,9 +44,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     plan = SUBSCRIPTION_PLAN
 
     if is_premium:
-        subscription = get_user_subscription(user_id)
-        expires_at = subscription["expires_at"] if subscription else "N/A"
-        formatted_date = format_date_uzbek(expires_at)
+        _, formatted_date, _ = _get_subscription_display(user_id)
 
         text = S.WELCOME_MESSAGE_PREMIUM.format(
             date=formatted_date,
@@ -82,11 +91,7 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
     if is_premium:
-        subscription = get_user_subscription(user_id)
-        expires_at = subscription["expires_at"] if subscription else "N/A"
-
-        formatted_date = format_date_uzbek(expires_at)
-        days_remaining = get_days_remaining(expires_at)
+        _, formatted_date, days_remaining = _get_subscription_display(user_id)
 
         await update.message.reply_text(
             S.SUBSCRIBE_PREMIUM_USER_INFO.format(
@@ -185,11 +190,7 @@ async def handle_stats_callback(
     plan = SUBSCRIPTION_PLAN
 
     if is_premium:
-        subscription = get_user_subscription(user_id)
-        expires_at = subscription["expires_at"] if subscription else "N/A"
-
-        formatted_date = format_date_uzbek(expires_at)
-        days_remaining = get_days_remaining(expires_at)
+        _, formatted_date, days_remaining = _get_subscription_display(user_id)
 
         button_text = f"{S.BTN_INCREASE_LIMIT} - {plan['stars']} Yulduz"
         keyboard = InlineKeyboardMarkup(
@@ -279,10 +280,7 @@ async def successful_payment_handler(
 
     # Activate premium (translation_limit=0 since we use daily message counts now)
     if activate_premium(user_id, days, 0):
-        subscription = get_user_subscription(user_id)
-        expires_at = subscription["expires_at"] if subscription else "N/A"
-
-        formatted_date = format_date_uzbek(expires_at)
+        _, formatted_date, _ = _get_subscription_display(user_id)
 
         await update.message.reply_text(
             f"{S.PAYMENT_SUCCESS_TITLE}"

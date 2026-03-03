@@ -185,13 +185,12 @@ class UserManager:
         session = self.get_or_create_session(user_id)
         current_time = time.time()
 
-        # Check requests per minute
-        session.request_timestamps.append(current_time)
+        # Count recent requests BEFORE appending
         recent_requests = sum(
             1 for ts in session.request_timestamps if current_time - ts < 60
         )
 
-        if recent_requests > self.rate_limits["requests_per_minute"]:
+        if recent_requests >= self.rate_limits["requests_per_minute"]:
             logger.warning(
                 f"User {user_id} exceeded rate limit: {recent_requests} requests/minute"
             )
@@ -201,6 +200,8 @@ class UserManager:
             )
             return False, error_msg
 
+        # Only record timestamp for allowed requests
+        session.request_timestamps.append(current_time)
         return True, None
 
     def check_text_length(self, text: str) -> tuple[bool, str | None]:

@@ -39,20 +39,22 @@ def get_gemini_client() -> genai.Client:
     return _gemini_client
 
 
-def get_stats_button(user_id: int) -> InlineKeyboardMarkup:
+def get_stats_button(user_id: int, is_premium: bool | None = None) -> InlineKeyboardMarkup:
     """
     Get the persistent stats/subscribe button based on user's subscription status.
     Also includes a feedback button.
 
     Args:
         user_id: Telegram user ID
+        is_premium: If provided, skip the DB lookup
 
     Returns:
         InlineKeyboardMarkup with appropriate buttons
     """
-    is_premium_user = is_user_premium(user_id)
+    if is_premium is None:
+        is_premium = is_user_premium(user_id)
 
-    if is_premium_user:
+    if is_premium:
         button_text = S.BTN_STATS
     else:
         button_text = S.BTN_SUBSCRIBE

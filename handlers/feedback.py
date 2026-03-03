@@ -14,6 +14,7 @@ from config import (
 from database import save_feedback, update_feedback_admin_msg_id
 import strings as S
 from utils import safe_html
+import httpx
 
 
 # Store users waiting to send feedback
@@ -68,9 +69,16 @@ def is_user_pending_feedback(user_id: int) -> bool:
     return user_id in _feedback_pending_users
 
 
-def clear_pending_feedback(user_id: int) -> None:
-    """Clear user's pending feedback state."""
-    _feedback_pending_users.discard(user_id)
+def _claim_pending_feedback(user_id: int) -> bool:
+    """Atomically check and clear pending feedback state.
+
+    Returns True if the user was pending (and is now cleared), False otherwise.
+    """
+    try:
+        _feedback_pending_users.remove(user_id)
+        return True
+    except KeyError:
+        return False
 
 
 async def handle_feedback_message(
@@ -81,19 +89,13 @@ async def handle_feedback_message(
 
     Returns True if the message was handled as feedback, False otherwise.
     """
-    import httpx
-
     if not update.effective_user:
         return False
 
     user_id = update.effective_user.id
 
-    # Check if user is in feedback mode
-    if not is_user_pending_feedback(user_id):
+    if not _claim_pending_feedback(user_id):
         return False
-
-    # Clear pending state
-    clear_pending_feedback(user_id)
 
     message = update.message
     if not message:

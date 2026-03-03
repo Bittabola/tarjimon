@@ -59,6 +59,45 @@ _GENERATION_CONFIG = types.GenerateContentConfig(
     thinking_config=types.ThinkingConfig(thinking_level="minimal"),
 )
 
+# Sentinel strings in AI output that indicate no translation was performed.
+_UZBEK_ALREADY_MARKERS: frozenset[str] = frozenset({
+    "allaqachon o'zbek tilida",
+    "rasmda matn topilmadi",
+})
+
+
+def _image_label_for(text: str) -> str:
+    """Return the appropriate image label based on whether translation occurred."""
+    lower = text.lower()
+    if any(m in lower for m in _UZBEK_ALREADY_MARKERS):
+        return S.LABEL_IMAGE_RESULT
+    return S.LABEL_IMAGE_TRANSLATION
+
+
+def _build_translation_content(
+    text_input: str | None,
+    image_data: bytes | None,
+    mime_type: str,
+) -> list:
+    """Build the content list for a Gemini translation request."""
+    if image_data and text_input:
+        system_prompt = PROMPTS["translation"]["text_with_image"]
+    elif image_data:
+        system_prompt = PROMPTS["translation"]["image_only"]
+    else:
+        system_prompt = PROMPTS["translation"]["text_only"]
+
+    content = []
+    if image_data:
+        content.append(types.Part.from_bytes(data=image_data, mime_type=mime_type))
+
+    if text_input:
+        system_prompt += f'\n\nHere is the text input to use: """{text_input}"""'
+    else:
+        system_prompt += "\n\nThere is no separate text input, process the image only."
+    content.append(system_prompt)
+    return content
+
 
 @dataclass(frozen=True, slots=True)
 class TranslationDeps:
@@ -167,19 +206,12 @@ def _format_translation_output(
 
     # Handle single content types
     if has_image and not has_caption:
-        # Image only (OCR extraction)
-        if "allaqachon o'zbek tilida" in translated_text.lower():
-            return S.LABEL_IMAGE_RESULT + safe_html(translated_text)
-        elif "rasmda matn topilmadi" in translated_text.lower():
-            return S.LABEL_IMAGE_RESULT + safe_html(translated_text)
-        else:
-            return S.LABEL_IMAGE_TRANSLATION + safe_html(translated_text)
+        return _image_label_for(translated_text) + safe_html(translated_text)
     elif not has_image:
-        # Text message only
-        if "allaqachon o'zbek tilida" in translated_text.lower():
+        lower = translated_text.lower()
+        if any(m in lower for m in _UZBEK_ALREADY_MARKERS):
             return S.LABEL_TEXT_RESULT + safe_html(translated_text)
-        else:
-            return S.LABEL_TEXT_TRANSLATION + safe_html(translated_text)
+        return S.LABEL_TEXT_TRANSLATION + safe_html(translated_text)
     else:
         # Fallback for any other case
         return safe_html(translated_text)
@@ -216,17 +248,13 @@ def _parse_structured_response(response: str) -> str:
         # Add image section (escape HTML in AI-generated content)
         if image_text:
             escaped_image_text = safe_html(image_text)
-            if "allaqachon o'zbek tilida" in image_text.lower():
-                output_parts.append(S.LABEL_IMAGE_RESULT + escaped_image_text)
-            elif "rasmda matn topilmadi" in image_text.lower():
-                output_parts.append(S.LABEL_IMAGE_RESULT + escaped_image_text)
-            else:
-                output_parts.append(S.LABEL_IMAGE_TRANSLATION + escaped_image_text)
+            output_parts.append(_image_label_for(image_text) + escaped_image_text)
 
         # Add caption section (escape HTML in AI-generated content)
         if caption_text:
             escaped_caption_text = safe_html(caption_text)
-            if "allaqachon o'zbek tilida" in caption_text.lower():
+            lower = caption_text.lower()
+            if any(m in lower for m in _UZBEK_ALREADY_MARKERS):
                 output_parts.append(S.LABEL_TEXT_RESULT + escaped_caption_text)
             else:
                 output_parts.append(S.LABEL_TEXT_TRANSLATION + escaped_caption_text)
@@ -259,32 +287,8 @@ async def _perform_single_model_translation(
     Returns:
         Tuple of (translated_text, total_token_count, input_tokens, output_tokens)
     """
-    # Build prompt based on what content we have
-    if image_data and text_input:
-        system_prompt = PROMPTS["translation"]["text_with_image"]
-    elif image_data:
-        system_prompt = PROMPTS["translation"]["image_only"]
-    else:
-        system_prompt = PROMPTS["translation"]["text_only"]
+    content = _build_translation_content(text_input, image_data, mime_type)
 
-    content = []
-    if image_data:
-        # Use the new API to create image part from bytes
-        image_part = types.Part.from_bytes(data=image_data, mime_type=mime_type)
-        content.append(image_part)
-
-    prompt_with_text = system_prompt
-    if text_input:
-        prompt_with_text += f'\n\nHere is the text input to use: """{text_input}"""'
-    else:
-        prompt_with_text += (
-            "\n\nThere is no separate text input, process the image only."
-        )
-    content.append(prompt_with_text)
-
-    _retryable_errors = _RETRYABLE_ERRORS
-
-    last_exception = None
     delay = RETRY_CONSTANTS.INITIAL_DELAY_SECONDS
 
     for attempt in range(1, RETRY_CONSTANTS.MAX_ATTEMPTS + 1):
@@ -315,7 +319,6 @@ async def _perform_single_model_translation(
             return response.text.strip(), token_count, input_tokens, output_tokens
 
         except (TimeoutError, genai_errors.ServerError) as e:
-            last_exception = e
             logger.warning(
                 f"Translation attempt {attempt}/{RETRY_CONSTANTS.MAX_ATTEMPTS} "
                 f"failed ({type(e).__name__}) for user {user_id}: {e}"
@@ -329,7 +332,7 @@ async def _perform_single_model_translation(
                 context_info={"operation": "single_model_translation", "attempts": attempt},
                 user_id=user_id,
             )
-            return _retryable_errors.get(type(e), S.GENERIC_ERROR), 0, 0, 0
+            return _RETRYABLE_ERRORS.get(type(e), S.GENERIC_ERROR), 0, 0, 0
 
         except genai_errors.ClientError as e:
             # Client errors (400) are not retryable — bad API key, invalid input, etc.
@@ -347,14 +350,6 @@ async def _perform_single_model_translation(
                 user_id=user_id,
             )
             return S.GENERIC_ERROR, 0, 0, 0
-
-    # Should not reach here, but just in case
-    log_error_with_context(
-        last_exception or RuntimeError("All retries exhausted"),
-        context_info={"operation": "single_model_translation", "attempts": RETRY_CONSTANTS.MAX_ATTEMPTS},
-        user_id=user_id,
-    )
-    return S.GENERIC_ERROR, 0, 0, 0
 
 
 async def _perform_streaming_translation(
@@ -377,31 +372,8 @@ async def _perform_streaming_translation(
     - If stream succeeds but usage_metadata is missing, tokens are estimated from text.
     - After all streaming retries fail, falls back to non-streaming API as last resort.
     """
-    # Build prompt -- same logic as non-streaming
-    if image_data and text_input:
-        system_prompt = PROMPTS["translation"]["text_with_image"]
-    elif image_data:
-        system_prompt = PROMPTS["translation"]["image_only"]
-    else:
-        system_prompt = PROMPTS["translation"]["text_only"]
+    content = _build_translation_content(text_input, image_data, mime_type)
 
-    content = []
-    if image_data:
-        image_part = types.Part.from_bytes(data=image_data, mime_type=mime_type)
-        content.append(image_part)
-
-    prompt_with_text = system_prompt
-    if text_input:
-        prompt_with_text += f'\n\nHere is the text input to use: """{text_input}"""'
-    else:
-        prompt_with_text += (
-            "\n\nThere is no separate text input, process the image only."
-        )
-    content.append(prompt_with_text)
-
-    _retryable_errors = _RETRYABLE_ERRORS
-
-    last_exception = None
     delay = RETRY_CONSTANTS.INITIAL_DELAY_SECONDS
 
     for attempt in range(1, RETRY_CONSTANTS.MAX_ATTEMPTS + 1):
@@ -506,8 +478,7 @@ async def _perform_streaming_translation(
             )
             return final_text, token_count, input_tokens, output_tokens
 
-        except tuple(_retryable_errors) as e:
-            last_exception = e
+        except tuple(_RETRYABLE_ERRORS) as e:
             logger.warning(
                 "Streaming attempt %d/%d failed (%s) for user %s: %s",
                 attempt, RETRY_CONSTANTS.MAX_ATTEMPTS,
@@ -537,7 +508,7 @@ async def _perform_streaming_translation(
                     context_info={"operation": "streaming_fallback_to_single"},
                     user_id=user_id,
                 )
-                return _retryable_errors.get(type(e), S.GENERIC_ERROR), 0, 0, 0
+                return _RETRYABLE_ERRORS.get(type(e), S.GENERIC_ERROR), 0, 0, 0
 
         except genai_errors.ClientError as e:
             log_error_with_context(
@@ -554,14 +525,6 @@ async def _perform_streaming_translation(
                 user_id=user_id,
             )
             return S.GENERIC_ERROR, 0, 0, 0
-
-    # Should not reach here, but just in case
-    log_error_with_context(
-        last_exception or RuntimeError("All retries exhausted"),
-        context_info={"operation": "streaming_translation", "attempts": RETRY_CONSTANTS.MAX_ATTEMPTS},
-        user_id=user_id,
-    )
-    return S.GENERIC_ERROR, 0, 0, 0
 
 
 class _StreamingCallback:
@@ -845,7 +808,7 @@ async def translate_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
 
         # Get stats/subscribe button
-        stats_keyboard = get_stats_button(user_id)
+        stats_keyboard = get_stats_button(user_id, is_premium=is_premium)
 
         # Split if message is too long
         output_text = formatted_output or S.GENERIC_ERROR
